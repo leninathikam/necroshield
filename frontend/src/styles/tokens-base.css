@@ -1,0 +1,132 @@
+:root {
+  color-scheme:dark;
+  --bg:#111115;
+  --sidebar:#0d0d11;
+  --panel:#18181e;
+  --panel-raised:#1e1d25;
+  --line:#2c2b35;
+  --line-soft:#24232c;
+  --text:#efedf5;
+  --muted:#a3a0b0;
+  --dim:#7f7b8e;
+  --violet:#bca4ff;
+  --violet-bright:#a78bfa;
+  --amber:#e8b86e;
+  --mint:#9fcebb;
+  --mono:"Cascadia Code","SFMono-Regular",Consolas,monospace
+}
+
+* {
+  box-sizing:border-box
+}
+
+html {
+  min-width:340px;
+  background:var(--bg)
+}
+
+body {
+  margin:0;
+  font-family:Arial,Helvetica,sans-serif;
+  color:var(--text);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased
+}
+
+button,input,select {
+  font:inherit
+}
+
+button,a,select {
+  -webkit-tap-highlight-color:transparent
+}
+
+button {
+  cursor:pointer
+}
+
+button:disabled {
+  opacity:.48;
+  cursor:not-allowed
+}
+
+button,a,select {
+  outline-offset:4px
+}
+
+button:focus-visible,a:focus-visible,select:focus-visible {
+  outline:2px solid var(--violet)
+}
+
+button {
+  color:inherit
+}
+
+a {
+  color:inherit;
+  text-decoration:none
+}
+
+button {
+  border:0
+}
+
+h1,h2,h3,p {
+  margin:0
+}
+
+button svg,a svg {
+  flex-shrink:0
+}
+
+.mono {
+  font-family:var(--mono)
+}
+
+.muted {
+  color:var(--muted)
+}
+
+.tiny {
+  font-size:11px
+}
+
+.eyebrow {
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:500;
+  letter-spacing:1.1px;
+  color:var(--muted);
+  text-transform:uppercase
+}
+
+.dot {
+  height:6px;
+  width:6px;
+  display:inline-block;
+  border-radius:50%;
+  flex-shrink:0
+}
+
+.dot.violet {
+  background:var(--violet-bright)
+}
+
+.dot.amber {
+  background:var(--amber)
+}
+
+.muted-dot {
+  background:var(--dim)
+}
+
+.spin {
+  animation:spin 1s linear infinite
+}
+
+@keyframes spin {
+  to {
+    transform:rotate(360deg)
+  }
+}

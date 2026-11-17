@@ -1,0 +1,20 @@
+.skip-link {
+  position:fixed;
+  top:8px;
+  left:245px;
+  z-index:100;
+  background:#ceb0ff;
+  color:#190f25;
+  padding:10px 15px;
+  border-radius:5px;
+  transform:translateY(-150%);
+  font-size:12px
+}
+
+.skip-link:focus {
+  transform:translateY(0)
+}
+
+.mobile-menu,.mobile-close {
+  display:none
+}

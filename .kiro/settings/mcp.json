@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "necroshield-inspector": {
+      "command": "uv",
+      "args": ["run", "--directory", "backend", "python", "-m", "necroshield.mcp_server"],
+      "disabled": false,
+      "autoApprove": ["list_benchmarks", "inspect_run"],
+      "disabledTools": ["read_synthetic_invoice", "sandbox_tool_call"]
+    }
+  }
+}

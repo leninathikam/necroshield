@@ -1,0 +1,87 @@
+/* Keep secondary evidence readable in a dense security workspace. */
+.eyebrow, .nav-caption, .brand small, .scope-tag, .sidebar-footer {
+  font-size: 9px;
+}
+.breadcrumb, .connection, .topbar-mode, .scope-card p {
+  font-size: 10px;
+}
+.scenario-control label, .replay-label .eyebrow, .scenario-version {
+  font-size: 9px;
+}
+.scenario-control select {
+  font-size: 13px;
+}
+.scenario-description, .metric-card p, .panel-header .tiny {
+  font-size: 10px;
+}
+.metric-card .eyebrow, .graph-footer, .graph-footer > span:first-child {
+  font-size: 9px;
+}
+.panel-header h2 {
+  font-size: 12px;
+}
+.graph-legend > span {
+  font-size: 9px;
+}
+.node-eyebrow, .node-status {
+  font-size: 8px;
+}
+.node-title {
+  font-size: 12px;
+}
+.inspector-empty span, .reason, .event-message, .detail-block pre, .run-output {
+  font-size: 11px;
+}
+.inspector-label .eyebrow, .detail-block .eyebrow, .decision, .hash-block > span, .hash-block code {
+  font-size: 9px;
+}
+.run-card-title, .run-facts {
+  font-size: 10px;
+}
+.run-card-title .mono, .run-outcome .mono {
+  font-size: 9px;
+}
+.timeline-main strong {
+  font-size: 12px;
+}
+.timeline-main > span {
+  font-size: 11px;
+}
+.timeline-sequence, .timeline-decision, .timeline-end, .segmented button {
+  font-size: 9px;
+}
+.evidence-strip, .evidence-strip .text-button, .registry-card > p, .registry-task p {
+  font-size: 11px;
+}
+.registry-card .eyebrow, .registry-card-bottom > .mono, .registry-card-bottom .text-button {
+  font-size: 9px;
+}
+.main-footer, .main-footer > span:first-child {
+  font-size: 9px;
+}
+@media(max-width:760px) {
+  .sidebar {
+    visibility: hidden;
+  }
+  .sidebar.open {
+    visibility: visible;
+  }
+  .topbar-mode {
+    display: none;
+  }
+  .breadcrumb, .connection {
+    font-size: 9px;
+  }
+  .panel-header h2 {
+    font-size: 11px;
+  }
+  .metric-card .eyebrow, .graph-footer, .graph-footer > span:first-child {
+    font-size: 8px;
+  }
+  .graph-footer > span:last-child, .main-footer > span:first-child {
+    font-size: 7px;
+  }
+  .timeline-decision {
+    font-size: 8px;
+  }
+}

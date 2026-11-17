@@ -1,0 +1,24 @@
+# Optional LOCAL database. This is not an execution sandbox or public deployment.
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: necroshield
+      POSTGRES_DB: necroshield
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - synthetic-database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U necroshield -d necroshield"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  synthetic-database:

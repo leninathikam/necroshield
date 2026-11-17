@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Backend policy and API acceptance",
+      "description": "Run focused policy, vertical-slice, and independent boundary tests after backend changes.",
+      "trigger": "PostFileSave",
+      "matcher": "(^|[\\\\/])backend[\\\\/].*\\.(py|json|toml)$",
+      "action": { "type": "command", "command": "python .kiro/scripts/focused_checks.py backend" },
+      "timeout": 120
+    },
+    {
+      "name": "Frontend contract typecheck",
+      "description": "Check dashboard types after TypeScript changes without launching services.",
+      "trigger": "PostFileSave",
+      "matcher": "(^|[\\\\/])frontend[\\\\/].*\\.(ts|tsx)$",
+      "action": { "type": "command", "command": "python .kiro/scripts/focused_checks.py frontend" },
+      "timeout": 120
+    }
+  ]
+}

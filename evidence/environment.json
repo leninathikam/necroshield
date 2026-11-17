@@ -1,0 +1,25 @@
+{
+  "recorded_at": "2026-10-30T20:57:34.947391+00:00",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "python": "3.14.3",
+  "node": "v25.6.1",
+  "packages": {
+    "fastapi": "0.162.0",
+    "pydantic": "2.14.2",
+    "sqlalchemy": "2.1.6",
+    "alembic": "1.20.1",
+    "psycopg": "3.3.6",
+    "mcp": "1.30.0",
+    "pytest": "9.2.0",
+    "hypothesis": "6.170.14"
+  },
+  "frontend": {
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "@xyflow/react": "12.12.0",
+    "tailwindcss": "4.3.3",
+    "@playwright/test": "1.64.1"
+  },
+  "database_verified": "sqlite",
+  "execution_kind": "synthetic_fixture"
+}
