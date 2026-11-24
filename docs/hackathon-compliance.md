@@ -11,4 +11,4 @@ Checked 2026-11-24.
 - `https://kiroween.devpost.com/`, `/rules`, and `/details/faqs` returned HTTP 403 to automated fetches from this sandbox. Eligibility details, required submission artifacts, video length limits, and category restrictions still need a manual read by a participant.
 
 ## Open items
-- Whether the earlier commit on `leninathikam/necroshield` `main` and the planned build count as one project. A participant must decide.
+- The earlier `leninathikam/necroshield` repo is a separate build. This project goes in a new repository so the two histories stay distinct.

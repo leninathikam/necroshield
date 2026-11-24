@@ -1,0 +1,16 @@
+[project]
+name = "necroshield"
+version = "0.1.0"
+description = "Adversarial security-testing arena for AI agent and MCP tool workflows"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# Planned once package access is available; the core below has no third-party dependencies.
+api = ["fastapi", "pydantic>=2", "sqlalchemy>=2", "alembic", "uvicorn", "mcp"]
+test = ["pytest>=8", "hypothesis"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

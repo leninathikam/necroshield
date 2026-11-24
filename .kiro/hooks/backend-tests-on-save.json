@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run backend tests after Python changes",
+      "trigger": "PostFileSave",
+      "description": "Runs the backend pytest suite whenever a backend module, test, or the standalone verifier is saved.",
+      "matcher": "(backend/.*|scripts/verify_evidence)\\.py$",
+      "action": {
+        "type": "command",
+        "command": "cd backend && python3 -m pytest -q -x 2>&1 | tail -15"
+      },
+      "timeout": 120
+    }
+  ]
+}

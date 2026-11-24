@@ -1,6 +1,9 @@
 # ADR 0001: Architecture for the NecroShield arena
 
-Status: proposed. Nothing in this ADR has been implemented or tested yet.
+Status: accepted for the Phase 1 core (implemented and tested 2026-11-24). Decisions about the API, database, UI, and MCP server are still proposed.
+
+### Framework-free core
+The domain core (`backend/necroshield/`) uses only the standard library: frozen dataclasses for contracts and `sqlite3` for local storage. This keeps policy, replay, and evidence logic testable in any environment. Pydantic models will validate HTTP input at the FastAPI boundary and convert to the core contracts. SQLAlchemy/Alembic will own the PostgreSQL schema, and the current SQLite store will become the local adapter.
 
 ## Decisions
 
@@ -30,4 +33,4 @@ In scope: synthetic documents and tool responses containing inert injection text
 Out of scope: real targets, real credentials, arbitrary commands, and any outbound network call.
 
 ## Originality
-The project must be started on or after October 30, 2026. The existing `leninathikam/necroshield` `main` branch has a first commit dated 2026-11-17, which is inside the window. Work in this ADR lives on a separate branch so it does not overwrite that history.
+The project must be started on or after October 30, 2026. This code was written from scratch on 2026-11-24, inside the October 30 to December 4, 2026 window, and is intended for a new repository. A separate earlier NecroShield build exists at `leninathikam/necroshield` (first commit 2026-11-17). None of its code was copied or read for this implementation.

@@ -1,0 +1,23 @@
+# Tasks: Phase 1 vertical slice
+
+- [x] 1. Contracts and scenario registry
+  - `contracts.py`, `scenarios.py` with `document_injection` v1 and digest
+  - _Requirements: R1.1, R1.2, R1.3_
+- [x] 2. Mock tools and fresh environments
+  - `tools.py` with `read_document`, `write_report`, `send_message` to an in-memory sink
+  - _Requirements: R3.2_
+- [x] 3. Default-deny policy gateway
+  - `policy.py`; tests show denied calls never invoke tool code
+  - _Requirements: R2.1, R2.2, R2.3, R2.4_
+- [x] 4. Fixture agent and paired runner
+  - `agent.py`, `runner.py`; identical intents, `deterministic_intent_replay` label
+  - _Requirements: R3.1, R3.2, R3.3, R3.4_
+- [x] 5. Outcome evaluator
+  - `evaluator.py`; canary-in-sink and report-content checks
+  - _Requirements: R4.1, R4.2_
+- [x] 6. Evidence chain, storage, and standalone verifier
+  - `evidence.py`, `storage.py`, `scripts/verify_evidence.py`; tamper tests
+  - _Requirements: R5.1, R5.2, R5.3, R5.4, R5.5_
+- [x] 7. CLI entry point and evidence report for Phase 1
+  - `python -m necroshield run document_injection --export out.json`
+- [ ] 8. (Blocked: needs package access) FastAPI + Pydantic API, SQLAlchemy/Alembic, Next.js dashboard, MCP server, Hypothesis properties, Playwright

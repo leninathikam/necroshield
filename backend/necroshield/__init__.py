@@ -1,0 +1,1 @@
+"""NecroShield arena core."""
