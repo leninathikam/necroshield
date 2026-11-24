@@ -117,7 +117,7 @@ jobs:
           node-version: "22"
       - name: install (lockfile when present)
         run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: package-lock
           path: frontend/package-lock.json
@@ -126,7 +126,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: frontend-out
           path: frontend/out
@@ -146,7 +146,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: frontend-out
           path: frontend/out
@@ -159,7 +159,7 @@ jobs:
       - name: run browser workflows (desktop and mobile)
         working-directory: frontend
         run: npx playwright test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: playwright-results
