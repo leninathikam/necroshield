@@ -55,7 +55,7 @@ Fixed findings and their tests are listed in `evidence/final-verification.md`. E
 | After review 1 | 61 passed | sandbox |
 | Core hardening and six scenarios | 111 passed, 1 skipped (Hypothesis not installed) | sandbox |
 | Full backend with API, MCP, live, Hypothesis | 143 passed, 0 skipped | CI run for `5482aa6`, `f584841`, and `8a682ca` |
-| After review 2 fixes | see `evidence/final-verification.md` | sandbox and CI |
+| After review 2 fixes | 135 passed + 4 skipped locally; 178 passed, 0 skipped in CI; Playwright 18 passed | sandbox; CI for `17eb3f0` and `dca45a5` |
 
 ## Session log
 ### 2026-11-24, session 1 (Kiro Web)
