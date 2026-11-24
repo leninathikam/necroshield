@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS pairs (
     policy_digest TEXT NOT NULL,
     policy_source TEXT NOT NULL,
     duration_ms REAL NOT NULL,
-    export_json TEXT NOT NULL
+    export_json TEXT NOT NULL,
+    analysis_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
@@ -50,6 +51,7 @@ class StoredPair:
     created_at: str
     duration_ms: float
     problems: list[str]
+    analysis: list[dict[str, Any]]
 
     @property
     def verified(self) -> bool:
@@ -75,29 +77,31 @@ class RunStore:
     def close(self) -> None:
         self._db.close()
 
-    def save(self, pair: PairResult) -> None:
+    def save(self, pair: PairResult, analysis: list[dict[str, Any]] | None = None) -> None:
+        """Store a pair. `analysis` is derived data (counterfactual attribution), kept apart from
+        the evidence export and never used to compute verified conclusions."""
         export = pair.export()
         duration = pair.baseline.duration_ms + pair.protected.duration_ms
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO pairs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO pairs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (pair.pair_id, datetime.now(timezone.utc).isoformat(), pair.scenario.scenario_id,
                  pair.scenario.version, pair.scenario.digest(), pair.policy.digest(), pair.policy_source,
-                 duration, canonical_json(export)),
+                 duration, canonical_json(export), canonical_json(analysis or [])),
             )
             for run in (pair.baseline, pair.protected):
                 self._db.execute("INSERT INTO runs VALUES (?, ?, ?, ?)",
                                  (run.run_id, pair.pair_id, run.mode.value, run.head))
 
     def _row_to_pair(self, row: tuple) -> StoredPair:
-        created, duration, text = row
+        created, duration, text, analysis = row
         export = json.loads(text)
-        return StoredPair(export, created, duration, verify_export(export))
+        return StoredPair(export, created, duration, verify_export(export), json.loads(analysis))
 
     def load(self, pair_id: str) -> StoredPair:
         with self._lock:
             row = self._db.execute(
-                "SELECT created_at, duration_ms, export_json FROM pairs WHERE pair_id = ?", (pair_id,)
+                "SELECT created_at, duration_ms, export_json, analysis_json FROM pairs WHERE pair_id = ?", (pair_id,)
             ).fetchone()
         if row is None:
             raise KeyError(pair_id)
@@ -106,8 +110,18 @@ class RunStore:
     def recent(self, limit: int = 50) -> list[StoredPair]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT created_at, duration_ms, export_json FROM pairs ORDER BY created_at DESC LIMIT ?",
+                "SELECT created_at, duration_ms, export_json, analysis_json FROM pairs ORDER BY created_at DESC LIMIT ?",
                 (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [self._row_to_pair(r) for r in rows]
+
+    def latest_default_per_scenario(self) -> list[StoredPair]:
+        """The newest scenario-default-policy pair for each scenario: the benchmark population."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT created_at, duration_ms, export_json, analysis_json FROM pairs p "
+                "WHERE policy_source = 'scenario_default' AND created_at = (SELECT MAX(created_at) FROM pairs q "
+                "WHERE q.scenario_id = p.scenario_id AND q.policy_source = 'scenario_default') ORDER BY scenario_id"
             ).fetchall()
         return [self._row_to_pair(r) for r in rows]
 

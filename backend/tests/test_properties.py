@@ -15,7 +15,7 @@ from necroshield.policy import evaluate  # noqa: E402
 from necroshield.runner import run_once, run_pair  # noqa: E402
 from necroshield.verification import verify_export  # noqa: E402
 
-TEXT = st.text(alphabet=st.characters(min_codepoint=32, max_codepoint=0x2FFF), max_size=40)
+TEXT = st.text(alphabet=st.characters(max_codepoint=0x2FFF, blacklist_categories=("Cc", "Cs")), max_size=40)
 TOOL = st.sampled_from(sorted(tools.TOOL_NAMES) + ["exec_shell", "delete_all"])
 ARG = st.sampled_from(["path", "customer_id", "report_id", "body", "to", "attach", "key", "value", "cmd"])
 CALL = st.builds(lambda t, a: ToolCall(t, a), TOOL, st.dictionaries(ARG, TEXT, max_size=4))

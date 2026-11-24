@@ -25,10 +25,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -r requirements-test.txt
@@ -40,10 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: run every scenario and verify each export with pinned digests
@@ -57,3 +57,42 @@ jobs:
             pd=$(python -c "from necroshield.catalog import REGISTRY as R; print(R['$id'].policy.digest())")
             python -I -S ../scripts/verify_evidence.py "$out" --scenario-digest "$sd" --policy-digest "$pd"
           done
+
+  api:
+    name: api, mcp, and live-loop integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-test.txt
+      - name: full backend suite (nothing may be skipped here)
+        run: |
+          python -m pytest -o addopts="" -q -rs tests | tee "$RUNNER_TEMP/pytest.txt"
+          if grep -q "skipped" "$RUNNER_TEMP/pytest.txt"; then echo "::error::tests were skipped"; exit 1; fi
+
+  security:
+    name: dependency audit and secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: audit python dependencies
+        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt -r backend/requirements-test.txt
+      - name: scan history for secrets
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --verbose

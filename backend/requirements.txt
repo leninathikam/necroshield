@@ -1,0 +1,5 @@
+# Runtime dependencies for the API service and MCP sandbox. The core package needs none of these.
+fastapi==0.115.12
+uvicorn==0.34.3
+mcp==1.9.4
+httpx==0.28.1

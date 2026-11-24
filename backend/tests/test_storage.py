@@ -26,7 +26,7 @@ def test_saved_pair_survives_reopen_and_is_verified_on_load(pair, tmp_path):
     "UPDATE pairs SET export_json = '{}'",
     "DELETE FROM runs",
     "INSERT OR REPLACE INTO pairs SELECT pair_id, created_at, scenario_id, scenario_version, scenario_digest, "
-    "policy_digest, policy_source, duration_ms, '{}' FROM pairs",
+    "policy_digest, policy_source, duration_ms, '{}', analysis_json FROM pairs",
 ])
 def test_history_is_append_only_through_the_store_connection(pair, tmp_path, statement):
     store = RunStore(tmp_path / "runs.db")
