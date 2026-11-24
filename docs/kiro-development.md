@@ -9,7 +9,7 @@ Every entry records work actually done in a Kiro session, along with the command
 
 **Environment findings**
 - The sandbox network mode was `INTEGRATIONS_ONLY`, so `pip install fastapi ...` failed with a proxy 403. Kiro chose to build a framework-free core first (ADR 0001).
-- GitHub: `git push` and `gh api` calls returned 404 for `leninathikam/necroshield`, and `POST user/repos` returned 403. Nothing was published from this session.
+- GitHub: the sandbox integration could not create repositories (`POST user/repos` returned 403). The participant deleted the earlier `leninathikam/necroshield` repo and created a new empty one by hand. Kiro then pushed commits `54130f8`, `ea791bb`, and `5ccf558` to `main`.
 
 **Files written**
 - `.kiro/steering/`: `product.md`, `tech.md`, `security.md` (always included) and `testing.md` (fileMatch on test files).
