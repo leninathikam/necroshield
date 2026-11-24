@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt -r requirements-test.txt
+      - run: pip install -r requirements.txt -r requirements-test.txt && pip freeze --all | sed 's/^/RESOLVED /'
       - name: full backend suite (nothing may be skipped here)
         run: |
           python -m pytest -o addopts="" -q -rs tests | tee "$RUNNER_TEMP/pytest.txt"
@@ -91,7 +91,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: audit python dependencies
-        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt -r backend/requirements-test.txt
+        run: |
+          pip install -r backend/requirements.txt -r backend/requirements-test.txt pip-audit
+          pip-audit
       - name: scan history for secrets
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz gitleaks
