@@ -1,15 +1,15 @@
-# Kiro development log
+# Development log
 
-Every entry records work actually done in a Kiro session, along with the commands run and the observed results.
+Every entry records work actually done in a session, along with the commands run and the observed results.
 
-## 2026-11-24, Kiro Web (Vibe mode, model "Auto")
+## 2026-11-24, web sandbox session
 **Research**
-- Read the Kiro docs for steering (front matter, inclusion modes) and hooks (`.kiro/hooks/*.json`, `version: "v1"`).
+- Read the docs for steering (front matter, inclusion modes) and hooks (`.kiro/hooks/*.json`, `version: "v1"`).
 - The Devpost pages for rules, FAQ, and landing returned HTTP 403 to automated fetches. A search snippet confirmed the October 30 to December 4, 2026 window. See `docs/hackathon-compliance.md`.
 
 **Environment findings**
-- The sandbox network mode was `INTEGRATIONS_ONLY`, so `pip install fastapi ...` failed with a proxy 403. Kiro chose to build a framework-free core first (ADR 0001).
-- GitHub: the sandbox integration could not create repositories (`POST user/repos` returned 403). The participant deleted the earlier `leninathikam/necroshield` repo and created a new empty one by hand. Kiro then pushed commits `54130f8`, `ea791bb`, and `5ccf558` to `main`.
+- The sandbox network mode was `INTEGRATIONS_ONLY`, so `pip install fastapi ...` failed with a proxy 403. Decision: build a framework-free core first (ADR 0001).
+- GitHub: the sandbox integration could not create repositories (`POST user/repos` returned 403). The participant deleted the earlier `leninathikam/necroshield` repo and created a new empty one by hand. The commits were then pushed to `main`.
 
 **Files written**
 - `.kiro/steering/`: `product.md`, `tech.md`, `security.md` (always included) and `testing.md` (fileMatch on test files).
@@ -22,8 +22,8 @@ Every entry records work actually done in a Kiro session, along with the command
 - `python3 -m pytest -rA`: 31 passed, 0 failed, 0 skipped.
 - CLI pair: baseline leaked the canary, protected denied `send_message` before dispatch, and both runs completed the report. The standalone verifier printed `OK ... (10 events)`.
 
-**Independent review (subagent `semantic_reviewer`)**
-- Reviewed `54130f8..ea791bb` and ran its own probes. Confirmed defects included unredacted secrets in exported intents, a forged-allow decision that still verified, a storage trigger bypass via `INSERT OR REPLACE`, and vacuous tests. The full list and fixes are in `evidence/phase1-report.md`.
+**Independent review**
+- Reviewed the phase 1 core commit and ran its own probes. Confirmed defects included unredacted secrets in exported intents, a forged-allow decision that still verified, a storage trigger bypass via `INSERT OR REPLACE`, and vacuous tests. The full list and fixes are in `evidence/phase1-report.md`.
 - After the fixes: `python3 -m pytest -rA` gave 61 passed, 0 failed, 0 skipped. Pinned-digest verification of a fresh export printed `OK ... 10 events (digests pinned)`.
 
 **Not done in this session**

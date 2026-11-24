@@ -1,6 +1,6 @@
 # Phase 1 evidence report
 
-Date: 2026-11-24. Environment: Kiro Web sandbox, Linux, Python 3.11.15, pytest 9.1.1, SQLite 3.40.0.
+Date: 2026-11-24. Environment: Linux sandbox, Python 3.11.15, pytest 9.1.1, SQLite 3.40.0.
 
 ## Commands and results
 ```
@@ -22,7 +22,7 @@ Observed pair for `document_injection@1.0.0`, replay `deterministic_intent_repla
 | protected | False | True | 1 (`send_message`: no grant for tool) |
 
 ## Independent review
-A Kiro `semantic_reviewer` subagent reviewed commit `ea791bb`. It ran probes and reported confirmed defects. Fixed in the follow-up commit:
+An independent review agent reviewed the phase 1 core commit. It ran probes and reported confirmed defects. Fixed in the follow-up commit:
 
 | Finding | Fix | Regression test |
 |---|---|---|

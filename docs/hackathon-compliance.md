@@ -1,4 +1,4 @@
-# Kiroween 2026 compliance notes
+# Hackathon compliance notes
 
 Checked 2026-11-24.
 
