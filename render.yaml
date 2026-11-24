@@ -1,0 +1,19 @@
+# Render blueprint (https://render.com/docs/blueprint-spec). Deploys the single container with a
+# persistent disk for the SQLite evidence store. Set NECROSHIELD_ALLOWED_ORIGINS to the public URL.
+services:
+  - type: web
+    name: necroshield
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: NECROSHIELD_ALLOWED_ORIGINS
+        sync: false
+      - key: NECROSHIELD_WRITE_LIMIT
+        value: "30"
+      - key: NECROSHIELD_LIVE_LIMIT
+        value: "3"
+    disk:
+      name: evidence
+      mountPath: /data
+      sizeGB: 1

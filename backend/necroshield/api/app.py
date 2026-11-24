@@ -1,13 +1,15 @@
 """HTTP API and static frontend host.
 
-Every security conclusion returned here comes from an export that the standalone verifier has
-just checked; responses carry the verification problems next to the data.
+Stored pair results are re-verified with the standalone verifier on every read, and responses
+carry the verification problems next to the data; outcomes are withheld for unverified pairs.
+MCP replay transcripts and live runs are labeled with their own, weaker evidence status.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ from ..mcp_server import replay_over_mcp
 from ..metrics import BUNDLE_FORMAT, summarize
 from ..runner import decisive_denials, run_pair
 from ..scenarios import Policy, Scenario
-from ..storage import RunStore, StoredPair
+from ..storage import RunStore, StorageFull, StoredPair
 from ..tools import TOOLS
 from ..verification import verify_export
 from .guards import Guards, RateLimiter
@@ -50,6 +52,11 @@ def _policy(policy_in: PolicyIn | None) -> Policy | None:
 
 def _summary(stored: StoredPair) -> dict[str, Any]:
     export = stored.export
+    if not stored.verified:
+        # Nothing from an unverified export is trusted, including its shape.
+        return {"pair_id": str(export.get("pair_id", "")), "created_at": stored.created_at, "verified": False,
+                "scenario_id": None, "scenario_kind": None, "policy_source": None,
+                "duration_ms": round(stored.duration_ms, 2), "baseline": None, "protected": None, "denied_calls": None}
     runs = {r["mode"]: r for r in export["runs"]}
     return {
         "pair_id": export["pair_id"], "created_at": stored.created_at, "verified": stored.verified,
@@ -65,7 +72,11 @@ def _summary(stored: StoredPair) -> dict[str, Any]:
 
 def _detail(stored: StoredPair) -> dict[str, Any]:
     return {"summary": _summary(stored), "verification": {"verified": stored.verified, "problems": stored.problems},
-            "analysis": stored.analysis, "export": stored.export}
+            "analysis": stored.analysis if stored.verified else [], "export": stored.export}
+
+
+def _current_pins() -> dict[str, dict[str, str]]:
+    return {s.scenario_id: {"scenario_digest": s.digest(), "policy_digest": s.policy.digest()} for s in REGISTRY.values()}
 
 
 def _scenario_view(s: Scenario) -> dict[str, Any]:
@@ -89,13 +100,25 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
                allowed_origins: set[str] | None = None) -> FastAPI:
     db_path = db_path or os.environ.get("NECROSHIELD_DB", "necroshield.db")
     origins = allowed_origins if allowed_origins is not None else {
-        o.strip() for o in os.environ.get("NECROSHIELD_ALLOWED_ORIGINS", "http://localhost:8017").split(",") if o.strip()}
-    store = RunStore(db_path)
-    app = FastAPI(title="NecroShield", version="0.2.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+        o.strip() for o in os.environ.get("NECROSHIELD_ALLOWED_ORIGINS", "http://localhost:8017,http://localhost:3017").split(",")
+        if o.strip()}
+    store = RunStore(db_path, max_pairs=int(os.environ.get("NECROSHIELD_MAX_PAIRS", "20000")))
+    # Swagger UI loads assets from a CDN, which the CSP forbids; the OpenAPI document stays available.
+    app = FastAPI(title="NecroShield", version="0.2.0", docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
     app.state.store = store
     app.add_middleware(Guards, allowed_origins=origins, max_body=MAX_BODY,
                        limiter=RateLimiter({"write": int(os.environ.get("NECROSHIELD_WRITE_LIMIT", "60")),
-                                            "live": int(os.environ.get("NECROSHIELD_LIVE_LIMIT", "3"))}))
+                                            "live": int(os.environ.get("NECROSHIELD_LIVE_LIMIT", "3")),
+                                            "read": int(os.environ.get("NECROSHIELD_READ_LIMIT", "600"))}))
+    scenario_views = [_scenario_view(s) for s in REGISTRY.values()]  # immutable definitions: build once
+    live_budget = {"remaining": int(os.environ.get("NECROSHIELD_LIVE_MAX_RUNS", "30"))}
+    live_lock = threading.Lock()
+
+    def _save(pair: Any) -> None:
+        try:
+            store.save(pair, decisive_denials(pair))
+        except StorageFull as exc:
+            raise HTTPException(507, str(exc)) from None
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -108,16 +131,21 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.get("/api/scenarios")
     def scenarios() -> list[dict[str, Any]]:
-        return [_scenario_view(s) for s in REGISTRY.values()]
+        return scenario_views
 
     @app.get("/api/scenarios/{scenario_id}")
     def scenario(scenario_id: str) -> dict[str, Any]:
-        return _scenario_view(_scenario(scenario_id))
+        _scenario(scenario_id)
+        return next(v for v in scenario_views if v["id"] == scenario_id)
+
+    @app.get("/api/pins")
+    def pins() -> dict[str, dict[str, str]]:
+        return _current_pins()
 
     @app.post("/api/runs", status_code=201)
     def create_run(request: RunRequest) -> dict[str, Any]:
         pair = run_pair(_scenario(request.scenario_id), _policy(request.policy))
-        store.save(pair, decisive_denials(pair))
+        _save(pair)
         return _detail(store.load(pair.pair_id))
 
     @app.get("/api/runs")
@@ -142,11 +170,15 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.post("/api/verify")
     def verify(export: Any = Body(...)) -> dict[str, Any]:
-        problems = verify_export(export)
+        # Bundles are checked against this server's current definitions, which also fixes the
+        # expected scenario set; single pairs may use custom policies, so they are not pinned.
+        is_bundle = isinstance(export, dict) and export.get("format") == BUNDLE_FORMAT
+        problems = verify_export(export, pins=_current_pins() if is_bundle else None)
         return {"verified": not problems, "problems": problems}
 
     def _benchmark() -> dict[str, Any]:
-        population = store.latest_default_per_scenario()
+        current = {s.scenario_id: (s.digest(), s.policy.digest()) for s in REGISTRY.values()}
+        population = store.latest_default_per_scenario(current)
         verified = [p for p in population if p.verified]
         exports = [p.export for p in verified]
         return {
@@ -155,7 +187,7 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
             "unverified_excluded": [p.export.get("pair_id") for p in population if not p.verified],
             "mean_pair_latency_ms": round(sum(p.duration_ms for p in verified) / len(verified), 3) if verified else None,
             "latency_note": "local in-process execution time; not part of the hash-chained evidence",
-            "missing_scenarios": sorted(set(REGISTRY) - {p.export["scenario"]["id"] for p in population}),
+            "missing_scenarios": sorted(set(REGISTRY) - {p.export["scenario"]["id"] for p in verified}),
         }
 
     @app.get("/api/benchmark")
@@ -165,13 +197,13 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
     @app.post("/api/benchmark", status_code=201)
     def run_benchmark() -> dict[str, Any]:
         for scenario_obj in REGISTRY.values():
-            pair = run_pair(scenario_obj)
-            store.save(pair, decisive_denials(pair))
+            _save(run_pair(scenario_obj))
         return _benchmark()
 
     @app.get("/api/benchmark/bundle")
     def bundle() -> JSONResponse:
-        verified = [p for p in store.latest_default_per_scenario() if p.verified]
+        current = {s.scenario_id: (s.digest(), s.policy.digest()) for s in REGISTRY.values()}
+        verified = [p for p in store.latest_default_per_scenario(current) if p.verified]
         if not verified:
             raise HTTPException(409, "no verified benchmark runs yet")
         exports = [p.export for p in verified]
@@ -180,7 +212,9 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.post("/api/mcp/replay")
     async def mcp_replay(request: McpDemoRequest) -> dict[str, Any]:
-        return await replay_over_mcp(_scenario(request.scenario_id), request.mode == "protected")
+        result = await replay_over_mcp(_scenario(request.scenario_id), request.mode == "protected")
+        result["evidence"] = "transcript only: not hash-chained, not stored, and not verified"
+        return result
 
     @app.get("/api/live/status")
     def live_status() -> dict[str, Any]:
@@ -201,9 +235,20 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
         if config is None:
             raise HTTPException(503, "live evaluation unavailable: no model provider is configured")
         scenario_obj = _scenario(request.scenario_id)
-        runs = [await asyncio.to_thread(run_live, scenario_obj, config, request.mode == "protected",
-                                        request.temperature) for _ in range(request.repetitions)]
-        return {"evaluation_mode": "live_agent_evaluation", "repetitions": request.repetitions, "runs": runs}
+        if not live_lock.acquire(blocking=False):
+            raise HTTPException(429, "a live evaluation is already running")
+        try:
+            if live_budget["remaining"] < request.repetitions:
+                raise HTTPException(429, "live evaluation budget for this server process is exhausted")
+            live_budget["remaining"] -= request.repetitions
+            runs = [await asyncio.to_thread(run_live, scenario_obj, config, request.mode == "protected",
+                                            request.temperature) for _ in range(request.repetitions)]
+        finally:
+            live_lock.release()
+        for run in runs:
+            run["verification"] = verify_export(run)
+        return {"evaluation_mode": "live_agent_evaluation", "repetitions": request.repetitions, "runs": runs,
+                "note": "each run is a separate model execution; runs are not paired or merged into fixture metrics"}
 
     static = Path(static_dir or os.environ.get("NECROSHIELD_STATIC", "")) if (static_dir or os.environ.get("NECROSHIELD_STATIC")) else None
     if static and static.is_dir():

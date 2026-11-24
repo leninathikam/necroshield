@@ -46,10 +46,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: run every scenario and verify each export with pinned digests
+      - name: run every scenario and verify each export and the bundle with pinned digests
         working-directory: backend
         run: |
           python -m necroshield benchmark --db "$RUNNER_TEMP/bench.db"
+          python -m necroshield scenarios --pins > "$RUNNER_TEMP/pins.json"
+          python -c "import json; from necroshield.catalog import REGISTRY; from necroshield.runner import run_pair; from necroshield.metrics import summarize, BUNDLE_FORMAT; p=[run_pair(s).export() for s in REGISTRY.values()]; json.dump({'format': BUNDLE_FORMAT, 'summary': summarize(p), 'pairs': p}, open('$RUNNER_TEMP/bundle.json', 'w'))"
+          python -I -S ../scripts/verify_evidence.py "$RUNNER_TEMP/bundle.json" --pins "$RUNNER_TEMP/pins.json"
           for id in $(python -c "from necroshield.catalog import REGISTRY; print(' '.join(REGISTRY))"); do
             out="$RUNNER_TEMP/$id.json"
             python -m necroshield run "$id" --db "$RUNNER_TEMP/runs.db" --export "$out"
@@ -166,3 +169,25 @@ jobs:
           path: |
             frontend/test-results
             frontend/playwright-report
+
+  container:
+    name: container build and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - run: docker build -t necroshield:ci .
+      - name: run the image and exercise the judge path
+        run: |
+          docker run -d --name ns -p 8017:8017 -e NECROSHIELD_ALLOWED_ORIGINS=http://127.0.0.1:8017 necroshield:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8017/api/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:8017/ | grep -q "NecroShield"
+          curl -sf http://127.0.0.1:8017/arena/ | grep -q "Attack Arena"
+          run=$(curl -sf -X POST -H 'content-type: application/json' -H 'origin: http://127.0.0.1:8017' \
+                 -d '{"scenario_id":"document_injection"}' http://127.0.0.1:8017/api/runs)
+          echo "$run" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['verification']['verified']; assert d['summary']['baseline']['attack_succeeded']; assert not d['summary']['protected']['attack_succeeded']; assert d['summary']['protected']['task_completed']; print('container judge path OK', d['summary']['pair_id'])"
+          docker exec ns id -u | grep -qx 10001
+      - if: always()
+        run: docker logs ns || true

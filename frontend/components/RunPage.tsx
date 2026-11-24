@@ -46,7 +46,10 @@ function Inner({ title, intro, children }: { title: string; intro: string; child
               {d.verification.verified ? (
                 children(d, scenario)
               ) : (
-                <ErrorState message={`evidence failed verification, so no conclusions are shown: ${d.verification.problems.join("; ")}`} />
+                <ErrorState
+                  prefix="Evidence failed verification, so no conclusions are shown"
+                  message={d.verification.problems.join("; ")}
+                />
               )}
             </div>
           );

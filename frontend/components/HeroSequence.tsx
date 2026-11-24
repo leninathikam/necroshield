@@ -19,7 +19,7 @@ export function HeroSequence({ scenarios }: { scenarios: ScenarioView[] }) {
   const [check, setCheck] = useState<Verification | null>(null);
   const [step, setStep] = useState(-1);
   const [error, setError] = useState("");
-  const scenario = scenarios.find((s) => s.id === scenarioId);
+  const scenario = scenarios.find((s) => s.id === (detail?.export.scenario.id ?? scenarioId));
 
   useEffect(() => {
     if (phase !== "done" || step >= STEPS.length - 1) return;
@@ -35,9 +35,9 @@ export function HeroSequence({ scenarios }: { scenarios: ScenarioView[] }) {
     setError("");
     try {
       const run = await api.startRun(scenarioId);
-      const independent = await api.verify(run.export);
+      const recheck = await api.verify(run.export);
       setDetail(run);
-      setCheck(independent);
+      setCheck(recheck);
       setPhase("done");
       setStep(0);
     } catch (e) {
@@ -60,7 +60,11 @@ export function HeroSequence({ scenarios }: { scenarios: ScenarioView[] }) {
     protectedRun
       ? `Same ${toolCalls(protectedRun).length} intended calls. Denied before dispatch: ${denied.map((c) => c.tool).join(", ") || "none"}. Task ${protectedRun.outcome.task_completed ? "completed" : "failed"}.`
       : "",
-    check ? (check.verified ? "Standalone verifier: chain, decisions, and outcomes check out." : `Verifier rejected: ${check.problems[0]}`) : "",
+    check
+      ? check.verified
+        ? "Standalone verifier: chain links, policy decisions, and outcomes re-derived from effects all check out."
+        : `Verifier rejected: ${check.problems[0]}`
+      : "",
   ];
 
   return (

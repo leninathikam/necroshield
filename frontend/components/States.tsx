@@ -12,10 +12,20 @@ export function Loading({ label = "Loading" }: { label?: string }) {
   );
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorState({
+  message,
+  onRetry,
+  prefix = "Request failed",
+}: {
+  message: string;
+  onRetry?: () => void;
+  prefix?: string;
+}) {
   return (
     <div className="state state-error" role="alert">
-      <p>Request failed: {message}</p>
+      <p>
+        {prefix}: {message}
+      </p>
       {onRetry && (
         <p style={{ marginTop: 12 }}>
           <button className="btn" onClick={onRetry}>

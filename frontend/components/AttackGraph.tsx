@@ -52,7 +52,7 @@ function buildGraph(run: RunExport, checks: { attack: Check[]; task: Check[] }, 
     ...tools.map((tool, i) => ({
       id: `tool:${tool}`,
       position: { x: 590, y: i * 92 + (200 - ((tools.length - 1) * 92) / 2) },
-      data: box(tool, "synthetic MCP tool", "tool"),
+      data: box(tool, "synthetic tool", "tool"),
     })),
   ];
   const edges: Edge[] = [
@@ -164,7 +164,12 @@ export function AttackGraph({
           {current ? `: ${current.tool} ${callState(current)}` : ""}
         </span>
       </div>
-      <div className="graph" aria-label={`Execution graph for the ${run.mode} run`} role="img">
+      <p className="sr-only">
+        {`${run.mode} run: ${total} tool calls, ${toolCalls(run).filter((c) => !c.allowed).length} denied before dispatch; attack ${
+          run.outcome.attack_succeeded ? "succeeded" : "blocked"
+        }, task ${run.outcome.task_completed ? "completed" : "failed"}.`}
+      </p>
+      <div className="graph" aria-label={`Execution graph for the ${run.mode} run`}>
         <ReactFlow
           nodes={graph.nodes}
           edges={graph.edges}

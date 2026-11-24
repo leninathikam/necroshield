@@ -10,16 +10,16 @@ export default function GraphPage() {
   return (
     <RunPage
       title="Execution Graph"
-      intro="The agent, its attacker-controlled input, the policy gateway at the MCP boundary, each tool, and the effects observed afterwards. Playback follows the run's hash-chained events in order."
+      intro="The agent, its attacker-controlled input, the policy gateway in front of every tool, each tool, and the effects observed afterwards. Playback follows the run's hash-chained events in order."
     >
       {(d, scenario) => {
         const run = d.export.runs.find((r) => r.mode === mode)!;
         return (
           <section className="panel">
             <div className="panel-title">
-              <div className="row" role="radiogroup" aria-label="Run to display">
+              <div className="row" role="group" aria-label="Run to display">
                 {(["baseline", "protected"] as const).map((m) => (
-                  <button key={m} className={`btn${m === mode ? " btn-primary" : ""}`} role="radio" aria-checked={m === mode} onClick={() => setMode(m)}>
+                  <button key={m} className="btn" aria-pressed={m === mode} onClick={() => setMode(m)}>
                     {m}
                   </button>
                 ))}

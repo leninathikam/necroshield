@@ -60,9 +60,9 @@ export default function EvidencePage() {
           return (
             <section className="panel">
               <div className="panel-title">
-                <div className="row" role="radiogroup" aria-label="Run to inspect">
+                <div className="row" role="group" aria-label="Run to inspect">
                   {(["baseline", "protected"] as const).map((m) => (
-                    <button key={m} className={`btn${m === mode ? " btn-primary" : ""}`} role="radio" aria-checked={m === mode} onClick={() => setMode(m)}>
+                    <button key={m} className="btn" aria-pressed={m === mode} onClick={() => setMode(m)}>
                       {m}
                     </button>
                   ))}

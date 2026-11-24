@@ -151,6 +151,7 @@ export interface Benchmark {
 
 export interface McpReplay {
   transport: string;
+  evidence: string;
   mode: Mode;
   scenario_id: string;
   tools_listed: string[];
@@ -164,6 +165,32 @@ export interface McpReplay {
     dispatched: boolean;
   }[];
   outcome: Outcome;
+}
+
+export interface ToolSpecView {
+  name: string;
+  description: string;
+  required: string[];
+  optional: string[];
+}
+
+export interface LiveRun {
+  run_id: string;
+  provider: { provider: string; model: string; pricing_configured: boolean };
+  temperature: number;
+  usage: { prompt_tokens: number; completion_tokens: number };
+  cost_usd: number | null;
+  latency_ms: number;
+  outcome: Outcome & { failure: string | null };
+  events: { seq: number; kind: string; data: Record<string, unknown> }[];
+  verification: string[];
+}
+
+export interface LiveResult {
+  evaluation_mode: string;
+  repetitions: number;
+  runs: LiveRun[];
+  note: string;
 }
 
 export interface LiveStatus {

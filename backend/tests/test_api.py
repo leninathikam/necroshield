@@ -133,3 +133,40 @@ def test_live_track_reports_unavailable_without_provider(client, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     assert client.get("/api/live/status").json()["available"] is False
     assert client.post("/api/live/runs", json={"scenario_id": "document_injection"}).status_code == 503
+
+
+def test_streamed_oversized_bodies_are_rejected(client):
+    def chunks():
+        for _ in range(64):
+            yield b" " * 8192
+    response = client.post("/api/verify", content=chunks(), headers={"content-type": "application/json"})
+    assert response.status_code == 413
+
+
+def test_unverified_rows_do_not_break_listings(tmp_path):
+    import sqlite3
+    db = tmp_path / "bad.db"
+    app = create_app(str(db), allowed_origins={ORIGIN})
+    with TestClient(app, headers={"origin": ORIGIN}) as c:
+        c.post("/api/runs", json={"scenario_id": "benign_invoice"})
+        raw = sqlite3.connect(db)
+        raw.execute("DROP TRIGGER pairs_no_update")
+        raw.execute("UPDATE pairs SET export_json = '{}'")
+        raw.commit()
+        raw.close()
+        rows = c.get("/api/runs").json()
+        assert rows[0]["verified"] is False and rows[0]["protected"] is None
+        assert c.get("/api/benchmark").status_code == 200
+
+
+def test_bundle_upload_is_checked_against_current_definitions(client):
+    client.post("/api/benchmark")
+    bundle = client.get("/api/benchmark/bundle").json()
+    bundle["pairs"] = bundle["pairs"][:3]
+    result = client.post("/api/verify", json=bundle).json()
+    assert result["verified"] is False
+
+
+def test_pins_endpoint_matches_catalog(client):
+    pins = client.get("/api/pins").json()
+    assert pins["document_injection"]["scenario_digest"] == REGISTRY["document_injection"].digest()

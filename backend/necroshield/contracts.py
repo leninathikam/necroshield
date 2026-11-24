@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,63}")
 MAX_ARG_CHARS = 4096
-_FORBIDDEN_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_FORBIDDEN_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\ud800-\udfff]")
 
 
 class RunMode(str, Enum):
@@ -34,13 +34,14 @@ def require_identifier(value: object, what: str) -> str:
 
 
 def require_text(value: object, what: str, limit: int) -> str:
-    """Exact str (no subclasses), bounded, and free of control characters other than tab/newline."""
+    """Exact str (no subclasses), bounded, and free of control characters (other than tab and
+    newline) and lone surrogates, which cannot be encoded and so could not be hashed."""
     if type(value) is not str:
         raise TypeError(f"{what} must be str, got {type(value).__name__}")
     if len(value) > limit:
         raise ValueError(f"{what} exceeds {limit} characters")
     if _FORBIDDEN_CHARS.search(value):
-        raise ValueError(f"{what} contains control characters")
+        raise ValueError(f"{what} contains control characters or lone surrogates")
     return value
 
 

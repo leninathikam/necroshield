@@ -63,33 +63,43 @@ class PairResult:
             "format": EXPORT_FORMAT,
             "pair_id": self.pair_id,
             "replay_mode": REPLAY_MODE,
-            "scenario": redact({
-                "id": s.scenario_id, "version": s.version, "kind": s.kind, "digest": s.digest(),
-                "attack_checks": [c.to_dict() for c in s.attack_checks],
-                "task_checks": [c.to_dict() for c in s.task_checks],
-            }),
+            "scenario": {**s.header(), "body_digest": s.body_digest(), "digest": s.digest()},
             "policy": {"digest": self.policy.digest(), "source": self.policy_source, **self.policy.to_dict()},
             "intents": redacted_intents(self.intents),
             "runs": [self.baseline.export(), self.protected.export()],
         })
 
 
+def effects_between(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """The observable state change one dispatch caused. Chained with the call, so a verifier can
+    re-derive every outcome from the evidence instead of trusting the claimed result."""
+    return {
+        "reads": after["reads"][len(before["reads"]):],
+        "sink": after["sink"][len(before["sink"]):],
+        "memory": {k: v for k, v in after["memory"].items() if before["memory"].get(k) != v},
+        "reports": {k: v for k, v in after["reports"].items() if before["reports"].get(k) != v},
+    }
+
+
 def _execute(scenario: Scenario, intents: tuple[ToolCall, ...], policy: Policy | None,
-             force_allow: frozenset[int] = frozenset()) -> tuple[list[DispatchRecord], Environment]:
+             force_allow: frozenset[int] = frozenset()
+             ) -> tuple[list[DispatchRecord], list[dict[str, Any]], Environment]:
     env = Environment.from_scenario(scenario)
     gateway = Gateway(env, policy)
     facts: dict[str, str] = {}
-    records = []
+    records, effects = [], []
     for index, intent in enumerate(intents):
         call = agent.bind(intent, facts)  # placeholders bound from this run's own observations
-        decision = gateway.decide(call)
-        if index in force_allow and not decision.allowed:
-            decision = Decision(True, "counterfactual: denial lifted for attribution")
-        record = gateway.execute(call, decision)
+        override = None
+        if index in force_allow and not gateway.decide(call).allowed:
+            override = Decision(True, "counterfactual: denial lifted for attribution")
+        before = env.snapshot()
+        record = gateway.execute(call, _counterfactual_override=override)
+        effects.append(effects_between(before, env.snapshot()))
         if record.output:
             agent.learn(facts, call, record.output)
         records.append(record)
-    return records, env
+    return records, effects, env
 
 
 def run_once(scenario: Scenario, intents: tuple[ToolCall, ...], mode: RunMode, pair_id: str = "",
@@ -104,13 +114,14 @@ def run_once(scenario: Scenario, intents: tuple[ToolCall, ...], mode: RunMode, p
         "scenario_digest": scenario.digest(), "policy_digest": policy.digest(),
         "intents_digest": intents_digest(intents),
     })
-    records, env = _execute(scenario, intents, policy if mode is RunMode.PROTECTED else None)
-    for index, (intent, record) in enumerate(zip(intents, records)):
+    records, effects, env = _execute(scenario, intents, policy if mode is RunMode.PROTECTED else None)
+    for index, (intent, record, effect) in enumerate(zip(intents, records, effects)):
         chain.append("tool_call", {
             "intent_index": index, **intent.to_dict(), "bound_args": dict(record.call.args),
             "allowed": record.decision.allowed,
             "reason": record.decision.reason, "grant_id": record.decision.grant_id,
             "dispatched": record.dispatched, "output": record.output, "error": record.error,
+            "effects": effect,
         })
     outcome = evaluate_outcome(scenario, env)
     chain.append("run_completed", {
@@ -141,7 +152,7 @@ def decisive_denials(pair: PairResult) -> list[dict[str, Any]]:
     for index, record in enumerate(pair.protected.records):
         if record.decision.allowed:
             continue
-        _, env = _execute(pair.scenario, pair.intents, pair.policy, frozenset({index}))
+        _, _, env = _execute(pair.scenario, pair.intents, pair.policy, frozenset({index}))
         lifted = evaluate_outcome(pair.scenario, env)
         findings.append({
             "intent_index": index, "tool": record.call.tool, "reason": record.decision.reason,

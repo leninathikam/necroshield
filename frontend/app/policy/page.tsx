@@ -4,17 +4,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Load, Loading } from "@/components/States";
 import { api } from "@/lib/api";
-import type { Grant, PolicyDoc, ScenarioView } from "@/lib/types";
+import type { Grant, PolicyDoc, ScenarioView, ToolSpecView } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
-
-const TOOLS: Record<string, string[]> = {
-  read_document: ["path"],
-  get_customer_record: ["customer_id"],
-  write_report: ["report_id", "body"],
-  send_message: ["to", "body", "attach"],
-  read_memory: ["key"],
-  write_memory: ["key", "value"],
-};
 
 interface Draft {
   enabled: boolean;
@@ -53,7 +44,7 @@ function GrantEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =
   );
 }
 
-function Editor({ scenario }: { scenario: ScenarioView }) {
+function Editor({ scenario, tools }: { scenario: ScenarioView; tools: ToolSpecView[] }) {
   const router = useRouter();
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [newTool, setNewTool] = useState("send_message");
@@ -72,7 +63,11 @@ function Editor({ scenario }: { scenario: ScenarioView }) {
 
   function addGrant() {
     const id = `g-custom-${drafts.length + 1}`;
-    const args = Object.fromEntries((TOOLS[newTool] ?? []).map((a) => [a, null])) as Record<string, string[] | null>;
+    const spec = tools.find((t) => t.name === newTool);
+    const args = Object.fromEntries([...(spec?.required ?? []), ...(spec?.optional ?? [])].map((a) => [a, null])) as Record<
+      string,
+      string[] | null
+    >;
     setDrafts([...drafts, { enabled: true, grant: { grant_id: id, tool: newTool, allowed_args: args } }]);
   }
 
@@ -98,7 +93,7 @@ function Editor({ scenario }: { scenario: ScenarioView }) {
           <label>
             New grant for
             <select value={newTool} onChange={(e) => setNewTool(e.target.value)}>
-              {Object.keys(TOOLS).map((t) => <option key={t}>{t}</option>)}
+              {tools.map((t) => <option key={t.name}>{t.name}</option>)}
             </select>
           </label>
           <button className="btn" onClick={addGrant}>Add grant</button>
@@ -129,6 +124,7 @@ function Inner() {
   const params = useSearchParams();
   const router = useRouter();
   const [scenarios, reload] = useApi((s) => api.scenarios(s), []);
+  const [tools] = useApi((s) => api.tools(s), []);
   return (
     <>
       <header className="page-head">
@@ -149,7 +145,7 @@ function Inner() {
                   {list.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
                 </select>
               </label>
-              <Editor scenario={scenario} />
+              {tools.state === "ready" ? <Editor scenario={scenario} tools={tools.data} /> : <Loading />}
             </div>
           );
         }}

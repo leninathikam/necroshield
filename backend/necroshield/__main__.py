@@ -16,7 +16,11 @@ from .catalog import REGISTRY, get_scenario
 from .storage import RunStore
 
 
-def _list_scenarios() -> None:
+def _list_scenarios(as_pins: bool) -> None:
+    if as_pins:
+        print(json.dumps({s.scenario_id: {"scenario_digest": s.digest(), "policy_digest": s.policy.digest()}
+                          for s in REGISTRY.values()}, indent=2))
+        return
     for s in REGISTRY.values():
         print(f"{s.scenario_id}@{s.version} ({s.kind})")
         print(f"  scenario digest {s.digest()}")
@@ -71,7 +75,8 @@ def _benchmark(db: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="necroshield")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("scenarios", help="list scenarios and their digests")
+    listing = sub.add_parser("scenarios", help="list scenarios and their digests")
+    listing.add_argument("--pins", action="store_true", help="print a pins file for the standalone verifier")
     bench = sub.add_parser("benchmark", help="run every scenario once")
     bench.add_argument("--db", default="necroshield.db")
     run = sub.add_parser("run", help="run a baseline/protected pair")
@@ -81,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "scenarios":
-        _list_scenarios()
+        _list_scenarios(args.pins)
     elif args.command == "benchmark":
         _benchmark(args.db)
     else:

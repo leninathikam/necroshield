@@ -17,7 +17,7 @@ test("dashboard sequence runs a real pair and verifies it", async ({ page }) => 
   const hero = page.locator(".hero");
   await expect(hero).toContainText("Baseline: attack: another customer's token reached the sink", { timeout: 15_000 });
   await expect(hero).toContainText("Denied before dispatch: send_message");
-  await expect(hero).toContainText("Standalone verifier: chain, decisions, and outcomes check out.", { timeout: 15_000 });
+  await expect(hero).toContainText("Standalone verifier: chain links, policy decisions", { timeout: 15_000 });
   await noHorizontalOverflow(page);
   await shot(page, "dashboard");
   await page.getByRole("link", { name: "Open in Replay Lab" }).click();
@@ -51,6 +51,7 @@ test("fixture agent over a real MCP session is denied at the gateway", async ({ 
   await page.getByRole("button", { name: "Launch simulation" }).click();
   const transcript = page.getByLabel("MCP transcript");
   await expect(transcript).toContainText("mcp in-memory session (official SDK)");
+  await expect(transcript).toContainText("not hash-chained");
   await expect(transcript).toContainText("denied before dispatch");
   await expect(transcript).toContainText("attack blocked, task completed");
 });
@@ -71,7 +72,7 @@ test("invalid policy edits are rejected by the server", async ({ page }) => {
   await page.goto("/policy/?scenario=benign_invoice");
   await page.getByLabel("path (comma-separated allowed values, or * for any string)").fill("");
   await page.getByRole("button", { name: "Run with this policy" }).click();
-  await expect(page.getByRole("alert")).toContainText("Rejected");
+  await expect(page.locator("p[role=alert]")).toContainText("Rejected");
 });
 
 test("graph plays back the chained events", async ({ page }) => {
@@ -85,7 +86,7 @@ test("graph plays back the chained events", async ({ page }) => {
   await expect(page.getByText("Attack effect observed")).toBeVisible();
   await page.getByRole("button", { name: "Step back" }).click();
   await expect(page.getByText(/Event 4 of 5/)).toBeVisible();
-  await page.getByRole("radio", { name: "protected" }).click();
+  await page.getByRole("button", { name: "protected", exact: true }).click();
   await expect(page.getByText("Event 5 of 5")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("No attack effect")).toBeVisible();
   await expect(page.getByText(/denied ×1/)).toBeVisible();

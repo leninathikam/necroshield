@@ -100,3 +100,36 @@ def test_provider_destination_must_be_https_and_allowlisted(env):
 
 def test_missing_provider_means_unavailable():
     assert ProviderConfig.from_env({}) is None
+
+
+@pytest.mark.parametrize("body", [
+    [], {"choices": []}, {"choices": [{"message": "text"}]},
+    {"choices": [{"message": {"tool_calls": "x"}}]},
+    {"choices": [{"message": {"content": "hi"}}], "usage": {"prompt_tokens": None, "completion_tokens": 1.5}},
+])
+def test_malformed_provider_responses_end_the_run_with_evidence(body):
+    def handler(request):
+        return httpx.Response(200, json=body)
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True,
+                      client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert result["outcome"]["failure"] == "provider error: malformed response"
+    assert verify_export(result) == []
+
+
+def test_hostile_model_text_is_sanitized_before_hashing():
+    script = [[{"id": "x", "type": "function", "function": {"name": "\ud800" * 500, "arguments": "{}"}}], None]
+    def handler(request):
+        calls = script.pop(0)
+        message = {"role": "assistant", "content": "\ud800\x00 hi", "tool_calls": calls}
+        return httpx.Response(200, content=json.dumps({"choices": [{"message": message}]}).encode(),
+                              headers={"content-type": "application/json"})
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True,
+                      client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert verify_export(result) == []
+    assert all(len(e["data"].get("tool", "")) <= 64 for e in result["events"] if e["kind"] == "invalid_call")
+
+
+def test_live_cost_tampering_is_detected():
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True, client=_client(SCRIPT, []))
+    result["cost_usd"] = 0.0
+    assert any("cost" in p for p in verify_export(result))

@@ -1,0 +1,24 @@
+# Tasks: web platform
+
+- [x] 1. Audit and harden the core (immutable grants, fail-closed validation, gateway choke point, no truncation, golden hash vector)
+  - _Requirements: R6.1–R6.6_
+- [x] 2. Six attack scenarios plus a control, with late-binding fixture intents and pinned regression tests
+  - _Requirements: R7.1–R7.3_
+- [x] 3. FastAPI service with strict schemas, guards, and verify-on-read
+  - _Requirements: R8.1–R8.3_
+- [x] 4. MCP sandbox on the official SDK, plus replay of fixture intents over a real client session
+  - _Requirements: R9.1, R9.2_
+- [x] 5. Counterfactual lab: custom policies and decisive-denial attribution
+  - _Requirements: R10.1, R10.2_
+- [x] 6. Live agent evaluation adapter with budgets and accounting; unavailable without a provider
+  - _Requirements: R11.1–R11.4_
+  - Note: tested only with a scripted transport double. No real-model run has happened (no provider credentials).
+- [x] 7. Benchmark metrics and verifiable bundle
+  - _Requirements: R12.1, R12.2_
+- [x] 8. Seven-screen interface with React Flow graph and hero sequence
+  - _Requirements: R13.1–R13.3_
+- [x] 9. CI, pinned dependencies, container
+  - _Requirements: R14.1, R14.2_
+- [ ] 10. Public deployment (blocked: needs hosting credentials from the participant)
+- [ ] 11. Real-model benchmark runs (blocked: needs a provider key and budget decision)
+- [ ] 12. Demo video recording (participant)

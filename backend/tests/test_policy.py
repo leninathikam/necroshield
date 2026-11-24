@@ -93,7 +93,7 @@ def test_denied_calls_never_reach_tool_code(monkeypatch):
     invoked = []
     for name, spec in list(tools.TOOLS.items()):
         wrapped = tools.ToolSpec(spec.name, spec.description, spec.required, spec.optional,
-                                 lambda env, args, _n=name, _f=spec.fn: invoked.append(_n) or _f(env, args))
+                                 lambda env, args, _n=name, _f=spec._fn: invoked.append(_n) or _f(env, args))
         monkeypatch.setitem(tools.TOOLS, name, wrapped)
     intents = (
         ToolCall("send_message", {"to": "c@sink.invalid", "attach": "all_customers"}),

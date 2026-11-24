@@ -23,8 +23,10 @@ class Gateway:
     def decide(self, call: ToolCall) -> Decision:
         return evaluate(self.policy, call) if self.policy is not None else UNCHECKED
 
-    def execute(self, call: ToolCall, decision: Decision | None = None) -> DispatchRecord:
-        decision = decision if decision is not None else self.decide(call)
+    def execute(self, call: ToolCall, *, _counterfactual_override: Decision | None = None) -> DispatchRecord:
+        """Decide, then dispatch only if allowed. The override exists solely for the runner's
+        counterfactual attribution, which never writes evidence; a test confines its use."""
+        decision = _counterfactual_override if _counterfactual_override is not None else self.decide(call)
         if not decision.allowed:
             return DispatchRecord(call, decision, dispatched=False)
         try:

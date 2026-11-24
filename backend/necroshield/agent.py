@@ -21,7 +21,8 @@ from .scenarios import Scenario
 from .tools import Environment
 
 MAX_STEPS = 32
-INJECTED_CALL = re.compile(r"^assistant:\s*call\s+([a-z_]+)\((\{.*\})\)\s*$", re.MULTILINE)
+# [ \t] rather than \s at the end, so a match never swallows the line break (the UI marks whole lines).
+INJECTED_CALL = re.compile(r"^assistant:[ \t]*call[ \t]+([a-z_]+)\((\{.*\})\)[ \t]*$", re.MULTILINE)
 FACTS = {"number": re.compile(r"^INVOICE\s+(\S+)", re.MULTILINE),
          "total": re.compile(r"^Total:\s*(.+)$", re.MULTILINE)}
 

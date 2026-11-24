@@ -32,10 +32,6 @@ async def _reject(send: Send, status: int, message: str) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-class _TooLarge(Exception):
-    pass
-
-
 class RateLimiter:
     """Fixed-window counter per (client, bucket). In-process: adequate for a single-instance demo."""
 
@@ -47,6 +43,8 @@ class RateLimiter:
     def allow(self, client: str, bucket: str) -> bool:
         now = time.monotonic()
         with self._lock:
+            if len(self._hits) > 10_000:  # evict idle keys so spoofed or one-off clients cannot grow memory
+                self._hits = defaultdict(list, {k: v for k, v in self._hits.items() if v and now - v[-1] < self.window})
             hits = [t for t in self._hits[(client, bucket)] if now - t < self.window]
             if len(hits) >= self.limits[bucket]:
                 self._hits[(client, bucket)] = hits
@@ -67,38 +65,53 @@ class Guards:
         headers = {k.decode().lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         method, path = scope["method"], scope["path"]
 
+        client = (scope.get("client") or ("unknown", 0))[0]
         if method in UNSAFE_METHODS:
+            # The origin check stops cross-site browser writes; it does not authenticate anyone.
             origin = headers.get("origin")
             if origin is not None and origin not in self.allowed_origins:
                 await _reject(send, 403, "origin not allowed")
                 return
-            client = (scope.get("client") or ("unknown", 0))[0]
             bucket = "live" if path.startswith("/api/live") else "write"
-            if not self.limiter.allow(client, bucket):
-                await _reject(send, 429, "rate limit exceeded")
-                return
+        else:
+            bucket = "read" if path.startswith("/api/") else ""
+        if bucket and not self.limiter.allow(client, bucket):
+            await _reject(send, 429, "rate limit exceeded")
+            return
         declared = headers.get("content-length")
         if declared is not None and (not declared.isdigit() or int(declared) > self.max_body):
             await _reject(send, 413, "request body too large")
             return
 
-        received = 0
+        received, too_large, started = 0, False, False
 
         async def limited_receive() -> dict[str, Any]:
-            nonlocal received
+            # Streamed bodies are counted as they arrive. Past the limit the app sees a disconnect,
+            # and the 413 below replaces whatever error response it would have produced.
+            nonlocal received, too_large
+            if too_large:
+                return {"type": "http.disconnect"}
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body:
-                    raise _TooLarge
+                    too_large = True
+                    return {"type": "http.disconnect"}
             return message
 
         async def secured_send(message: dict[str, Any]) -> None:
+            nonlocal started
+            if too_large:
+                return
             if message["type"] == "http.response.start":
+                started = True
                 message = {**message, "headers": [*message.get("headers", []), *SECURITY_HEADERS]}
             await send(message)
 
         try:
             await self.app(scope, limited_receive, secured_send)
-        except _TooLarge:
+        except Exception:
+            if not too_large:
+                raise
+        if too_large and not started:
             await _reject(send, 413, "request body too large")

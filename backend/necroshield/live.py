@@ -84,6 +84,35 @@ def _system_prompt(scenario: Scenario) -> str:
             f"Its customer is cust-001.")
 
 
+def _clean(value: Any, limit: int) -> str:
+    """Model-sourced text bound for evidence: a bounded str with no control characters or lone
+    surrogates, so hostile output can neither crash hashing nor bloat the chain."""
+    text = value if isinstance(value, str) else ("" if value is None else repr(value))
+    return "".join(ch if ch in "\n\t" or (" " <= ch and ch != "\x7f" and not "\ud800" <= ch <= "\udfff") else "?"
+                   for ch in text[:limit])
+
+
+def _parse_completion(body: Any) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]:
+    """Validate the provider response shape; raises on anything unexpected."""
+    message = body["choices"][0]["message"]
+    if not isinstance(message, dict):
+        raise TypeError("message must be an object")
+    requested = message.get("tool_calls") or []
+    if not isinstance(requested, list) or not all(isinstance(c, dict) and isinstance(c.get("function"), dict)
+                                                  for c in requested):
+        raise TypeError("tool_calls must be a list of function calls")
+    raw_usage = body.get("usage") or {}
+    if not isinstance(raw_usage, dict):
+        raise TypeError("usage must be an object")
+    usage = {}
+    for key in ("prompt_tokens", "completion_tokens"):
+        value = raw_usage.get(key, 0) or 0
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < 10**9:
+            raise ValueError(f"usage.{key} must be a non-negative integer")
+        usage[key] = value
+    return message, requested, usage
+
+
 def _cost(config: ProviderConfig, prompt: int, completion: int) -> float | None:
     if config.price_in_per_mtok is None or config.price_out_per_mtok is None:
         return None
@@ -102,6 +131,8 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
         "provider": config.provider, "model": config.model, "temperature": str(temperature),
         "scenario_id": scenario.scenario_id, "scenario_version": scenario.version,
         "scenario_digest": scenario.digest(), "policy_digest": policy.digest(),
+        "price_in_per_mtok": "" if config.price_in_per_mtok is None else str(config.price_in_per_mtok),
+        "price_out_per_mtok": "" if config.price_out_per_mtok is None else str(config.price_out_per_mtok),
     })
     messages: list[dict[str, Any]] = [{"role": "system", "content": _system_prompt(scenario)},
                                       {"role": "user", "content": "Begin."}]
@@ -119,17 +150,18 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
                                      json={"model": config.model, "messages": messages, "tools": tool_schemas(),
                                            "temperature": temperature})
                 response.raise_for_status()
-                body = response.json()
-                message = body["choices"][0]["message"]
-            except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                message, requested, turn_usage = _parse_completion(response.json())
+            except httpx.HTTPError as exc:
                 failure = f"provider error: {type(exc).__name__}"
                 break
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError):
+                failure = "provider error: malformed response"
+                break
             for k in usage:
-                usage[k] += int((body.get("usage") or {}).get(k, 0))
-            requested = message.get("tool_calls") or []
+                usage[k] += turn_usage[k]
             chain.append("model_turn", {
-                "turn": turn, "content": str(message.get("content") or "")[:4000],
-                "requested_tools": [c.get("function", {}).get("name", "") for c in requested],
+                "turn": turn, "content": _clean(message.get("content"), 4000),
+                "requested_tools": [_clean(c["function"].get("name"), 64) for c in requested],
             })
             messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": requested or None})
             if not requested:
@@ -139,12 +171,13 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
                 if calls > MAX_CALLS:
                     failure = "tool-call budget exceeded"
                     break
-                fn = request.get("function", {})
+                fn = request["function"]
                 try:
                     call = ToolCall(fn.get("name", ""), json.loads(fn.get("arguments") or "{}"))
                 except (ValueError, TypeError, AttributeError) as exc:
-                    result_text = f"invalid tool call: {exc}"
-                    chain.append("invalid_call", {"turn": turn, "tool": str(fn.get("name", ""))[:64], "error": str(exc)})
+                    result_text = f"invalid tool call: {type(exc).__name__}"
+                    chain.append("invalid_call", {"turn": turn, "tool": _clean(fn.get("name"), 64),
+                                                  "error": _clean(str(exc), 300)})
                 else:
                     record = gateway.execute(call)
                     chain.append("tool_call", {

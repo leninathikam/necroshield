@@ -26,8 +26,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </Link>
             <Nav />
             <p className="sidebar-note">
-              Synthetic data only. Every result on these pages comes from a run on this server, and its evidence is
-              verified before it is shown.
+              Synthetic data only. Pair results come from runs on this server and are re-verified with the standalone
+              verifier before they are shown. MCP transcripts and live runs are labeled separately.
             </p>
           </aside>
           <main id="main" className="main">

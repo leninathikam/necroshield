@@ -1,0 +1,10 @@
+**/node_modules
+**/.next
+**/out
+**/__pycache__
+**/*.db
+**/test-results
+**/playwright-report
+.git
+.kiro
+evidence

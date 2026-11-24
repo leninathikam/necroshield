@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from .contracts import ToolCall, canonical_json, require_identifier, require_text
+from .evidence import is_redactable
 from .tools import TOOL_NAMES, TOOLS
 
 MAX_DOCUMENT_CHARS = 16384
@@ -50,6 +51,10 @@ class Grant:
                 values = tuple(values)
                 if not values or any(type(v) is not str for v in values):
                     raise ValueError(f"grant {self.grant_id}: {name} needs a non-empty list of strings or null")
+                for v in values:
+                    require_text(v, f"grant {self.grant_id} {name}", 1024)
+                    if is_redactable(v):
+                        raise ValueError(f"grant {self.grant_id}: scope values must not look like secrets")
                 clean[name] = tuple(sorted(set(values)))
         if not set(spec.required) <= set(clean):
             raise ValueError(f"grant {self.grant_id}: must constrain required arguments {spec.required}")
@@ -124,6 +129,8 @@ class Check:
         if not required <= set(self.params) <= CHECK_PARAMS[self.kind]:
             raise ValueError(f"check {self.kind} needs {sorted(required)}")
         clean = {k: require_text(v, f"check {k}", 1024) for k, v in self.params.items()}
+        if any(is_redactable(v) for v in clean.values()) or is_redactable(self.description):
+            raise ValueError("check parameters must not look like secrets")
         object.__setattr__(self, "params", MappingProxyType(clean))
 
     def to_dict(self) -> dict[str, Any]:
@@ -160,6 +167,8 @@ class Scenario:
         object.__setattr__(self, "documents", _frozen_text_map(self.documents, "document", RESOURCE_ID))
         object.__setattr__(self, "customer_records", _frozen_text_map(self.customer_records, "customer", RESOURCE_ID))
         object.__setattr__(self, "memory", _frozen_text_map(self.memory, "memory", RESOURCE_ID))
+        if any(is_redactable(v) for v in self.memory.values()):
+            raise ValueError("initial memory must not look like secrets: it is exported as evidence")
         for name in ("plan", "attack_checks", "task_checks", "canaries"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.plan or any(c.tool not in TOOL_NAMES for c in self.plan):
@@ -173,18 +182,39 @@ class Scenario:
     def allowed_tools(self) -> tuple[str, ...]:
         return tuple(sorted({g.tool for g in self.policy.grants}))
 
-    def manifest(self) -> dict[str, Any]:
-        """Full, canonical definition. The digest covers every field."""
+    def header(self) -> dict[str, Any]:
+        """The fields evidence relies on. Exported in full, so a verifier can bind them to the digest."""
         return {
-            "scenario_id": self.scenario_id, "version": self.version, "kind": self.kind,
+            "id": self.scenario_id, "version": self.version, "kind": self.kind,
+            "attack_checks": [c.to_dict() for c in self.attack_checks],
+            "task_checks": [c.to_dict() for c in self.task_checks],
+            "initial_memory": dict(self.memory),
+        }
+
+    def body(self) -> dict[str, Any]:
+        """Everything else, which may contain synthetic secrets and is exported only as a digest."""
+        return {
             "title": self.title, "attack_class": self.attack_class, "trusted_task": self.trusted_task,
             "attacker_surface": self.attacker_surface, "forbidden_behavior": self.forbidden_behavior,
             "documents": dict(self.documents), "customer_records": dict(self.customer_records),
-            "memory": dict(self.memory), "plan": [c.to_dict() for c in self.plan],
-            "attack_checks": [c.to_dict() for c in self.attack_checks],
-            "task_checks": [c.to_dict() for c in self.task_checks],
-            "policy": self.policy.to_dict(), "canaries": list(self.canaries),
+            "plan": [c.to_dict() for c in self.plan], "policy": self.policy.to_dict(),
+            "canaries": list(self.canaries),
         }
 
+    def manifest(self) -> dict[str, Any]:
+        return {"header": self.header(), "body": self.body()}
+
+    def body_digest(self) -> str:
+        return _sha(self.body())
+
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json(self.manifest()).encode()).hexdigest()
+        """sha256 over the header digest and body digest; covers every field."""
+        return scenario_digest(self.header(), self.body_digest())
+
+
+def _sha(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+def scenario_digest(header: dict[str, Any], body_digest: str) -> str:
+    return _sha({"header_digest": _sha(header), "body_digest": body_digest})

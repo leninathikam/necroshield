@@ -25,5 +25,6 @@ def verifier() -> ModuleType:
     return module
 
 
-def verify_export(export: Any, scenario_digest: str | None = None, policy_digest: str | None = None) -> list[str]:
-    return verifier().verify_any(export, scenario_digest, policy_digest)
+def verify_export(export: Any, scenario_digest: str | None = None, policy_digest: str | None = None,
+                  pins: dict[str, dict[str, str]] | None = None) -> list[str]:
+    return verifier().verify_any(export, scenario_digest, policy_digest, pins)

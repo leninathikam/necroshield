@@ -24,6 +24,12 @@ _REDACTIONS = (
 )
 
 
+def is_redactable(text: str) -> bool:
+    """True if redaction would change this text. Policy scope values, check parameters, and
+    initial memory must not be redactable, so evidence and enforcement see the same values."""
+    return any(pattern.search(text) for pattern, _ in _REDACTIONS)
+
+
 def redact(value: Any) -> Any:
     """Redact every string in a JSON-like value, including dict keys."""
     if isinstance(value, str):

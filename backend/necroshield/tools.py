@@ -3,7 +3,8 @@
 No tool touches disk, network, or processes. Tools never truncate: an output over the limit is an
 explicit error, so a security-relevant value can never be silently cut off.
 
-Only `gateway.Gateway` may call `_invoke`. A test enforces that no other module references it.
+Only `gateway.Gateway` may call `_invoke`, and only `_invoke` may call a ToolSpec's `_fn`.
+Tests enforce both.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ class ToolSpec:
     description: str
     required: tuple[str, ...]
     optional: tuple[str, ...]
-    fn: Callable[[Environment, Mapping[str, str]], str]
+    _fn: Callable[[Environment, Mapping[str, str]], str]  # private: only _invoke may call it
 
 
 TOOLS: dict[str, ToolSpec] = {spec.name: spec for spec in (
@@ -136,4 +137,4 @@ def _invoke(env: Environment, tool: str, args: Mapping[str, str]) -> str:
     if missing or extra:
         raise ToolError(f"bad arguments: missing {sorted(missing)}, unexpected {sorted(extra)}")
     env.invocations.append(tool)
-    return spec.fn(env, args)
+    return spec._fn(env, args)

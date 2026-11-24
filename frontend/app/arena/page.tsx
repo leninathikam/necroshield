@@ -6,7 +6,7 @@ import { SourceText } from "@/components/SourceText";
 import { Load } from "@/components/States";
 import { api } from "@/lib/api";
 import { argsText } from "@/lib/events";
-import type { McpReplay, Mode, ScenarioView } from "@/lib/types";
+import type { LiveResult, McpReplay, Mode, ScenarioView } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 type Target = "fixture" | "mcp" | "live";
@@ -61,6 +61,7 @@ function McpTranscript({ result }: { result: McpReplay }) {
         <h2>MCP session ({result.mode})</h2>
         <span className="faint">{result.transport} · tools listed: {result.tools_listed.length}</span>
       </div>
+      <p className="faint" style={{ marginBottom: 10 }}>Evidence status: {result.evidence}.</p>
       <div className="table-wrap">
         <table>
           <thead><tr><th>Call</th><th>Gateway</th><th>MCP response</th></tr></thead>
@@ -83,6 +84,41 @@ function McpTranscript({ result }: { result: McpReplay }) {
   );
 }
 
+function LiveRuns({ result }: { result: LiveResult }) {
+  return (
+    <section className="panel" aria-label="Live agent evaluation">
+      <div className="panel-title">
+        <h2>Live agent evaluation</h2>
+        <span className="faint">{result.note}</span>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Run</th><th>Model</th><th>Tool calls</th><th>Outcome</th><th>Tokens · cost</th><th>Chain</th></tr></thead>
+          <tbody>
+            {result.runs.map((r) => {
+              const calls = r.events.filter((e) => e.kind === "tool_call");
+              const denied = calls.filter((e) => e.data.allowed === false).length;
+              return (
+                <tr key={r.run_id}>
+                  <td className="hash">{r.run_id.slice(0, 8)}</td>
+                  <td>{r.provider.provider} / {r.provider.model} · t={r.temperature}</td>
+                  <td>{calls.length} ({denied} denied)</td>
+                  <td>
+                    attack {r.outcome.attack_succeeded ? "succeeded" : "not observed"}, task {r.outcome.task_completed ? "completed" : "failed"}
+                    {r.outcome.failure && <div className="faint">stopped: {r.outcome.failure}</div>}
+                  </td>
+                  <td>{r.usage.prompt_tokens + r.usage.completion_tokens} · {r.cost_usd === null ? "cost null (no pricing set)" : `$${r.cost_usd}`}</td>
+                  <td>{r.verification.length === 0 ? <span className="chip chip-verified">verified</span> : <span className="chip chip-failed">rejected</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function Arena() {
   const router = useRouter();
   const [scenarios, reload] = useApi((s) => api.scenarios(s), []);
@@ -93,17 +129,21 @@ export default function Arena() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mcp, setMcp] = useState<McpReplay | null>(null);
+  const [liveResult, setLiveResult] = useState<LiveResult | null>(null);
 
   async function launch(id: string) {
     setBusy(true);
     setError("");
     setMcp(null);
+    setLiveResult(null);
     try {
       if (target === "fixture") {
         const run = await api.startRun(id);
         router.push(`/replay/?pair=${run.summary.pair_id}`);
       } else if (target === "mcp") {
         setMcp(await api.mcpReplay(id, mode));
+      } else {
+        setLiveResult(await api.liveRun(id, mode, 1));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -146,7 +186,7 @@ export default function Arena() {
                     </option>
                   </select>
                 </label>
-                {target === "mcp" && (
+                {target !== "fixture" && (
                   <label>
                     Gateway
                     <select value={mode} onChange={(e) => setMode(e.target.value as Mode)}>
@@ -155,7 +195,7 @@ export default function Arena() {
                     </select>
                   </label>
                 )}
-                <button className="btn btn-primary" onClick={() => launch(id)} disabled={busy || target === "live"}>
+                <button className="btn btn-primary" onClick={() => launch(id)} disabled={busy || (target === "live" && !liveReady)}>
                   {busy ? "Running…" : "Launch simulation"}
                 </button>
               </div>
@@ -164,6 +204,7 @@ export default function Arena() {
               )}
               {error && <p role="alert" className="state state-error">Launch failed: {error}</p>}
               {mcp && <McpTranscript result={mcp} />}
+              {liveResult && <LiveRuns result={liveResult} />}
               <ScenarioDetail s={s} />
             </div>
           );

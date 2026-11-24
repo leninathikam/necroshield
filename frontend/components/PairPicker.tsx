@@ -32,6 +32,9 @@ export function PairPicker({ value, onChange }: { value: string | null; onChange
               onChange={(e) => onChange(e.target.value)}
               aria-label="Select a stored run"
             >
+              {value && !list.some((r) => r.pair_id === value) && (
+                <option value={value}>selected run · {value.slice(0, 8)}</option>
+              )}
               {list.map((r) => (
                 <option key={r.pair_id} value={r.pair_id}>
                   {r.scenario_id} · {r.policy_source === "custom" ? "custom policy" : "default policy"} ·{" "}
