@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: core tests (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements-test.txt
+      - name: unit, scenario regression, and property tests
+        run: python -m pytest -o addopts="" -q -rs tests
+
+  evidence:
+    name: benchmark and standalone verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: run every scenario and verify each export with pinned digests
+        working-directory: backend
+        run: |
+          python -m necroshield benchmark --db "$RUNNER_TEMP/bench.db"
+          for id in $(python -c "from necroshield.catalog import REGISTRY; print(' '.join(REGISTRY))"); do
+            out="$RUNNER_TEMP/$id.json"
+            python -m necroshield run "$id" --db "$RUNNER_TEMP/runs.db" --export "$out"
+            sd=$(python -c "from necroshield.catalog import REGISTRY as R; print(R['$id'].digest())")
+            pd=$(python -c "from necroshield.catalog import REGISTRY as R; print(R['$id'].policy.digest())")
+            python -I -S ../scripts/verify_evidence.py "$out" --scenario-digest "$sd" --policy-digest "$pd"
+          done

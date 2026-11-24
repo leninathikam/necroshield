@@ -1,67 +1,70 @@
-"""Naive fixture agent: a bounded state machine that obeys instruction lines found in its source.
+"""Naive fixture agent: a bounded state machine that follows its task plan and obeys any
+`assistant: call tool({...})` line it finds in tool output.
 
-It exists to produce a deterministic attack intent, not to model any real LLM.
+Planning happens once, against a disposable planning environment, so injections in documents and
+in tool responses are both seen through real tool output. The resulting intents are templates:
+`$name` placeholders are bound at execution time from facts the agent learns in *that* run. The
+intended actions are therefore identical across runs, while values flow from what each run
+actually observed. This agent does not model any LLM.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
-from enum import Enum
+from collections import deque
+from string import Template
 
 from .contracts import ToolCall
+from .gateway import Gateway
 from .scenarios import Scenario
+from .tools import Environment
 
-MAX_STEPS = 16
+MAX_STEPS = 32
 INJECTED_CALL = re.compile(r"^assistant:\s*call\s+([a-z_]+)\((\{.*\})\)\s*$", re.MULTILINE)
-INVOICE_NUMBER = re.compile(r"^INVOICE\s+(\S+)", re.MULTILINE)
-INVOICE_TOTAL = re.compile(r"^Total:\s*(.+)$", re.MULTILINE)
+FACTS = {"number": re.compile(r"^INVOICE\s+(\S+)", re.MULTILINE),
+         "total": re.compile(r"^Total:\s*(.+)$", re.MULTILINE)}
 
 
-class Step(Enum):
-    READ_SOURCE = "read_source"
-    EXTRACT = "extract"
-    FOLLOW_INSTRUCTIONS = "follow_instructions"
-    REPORT = "report"
-    DONE = "done"
+def injected_calls(text: str) -> list[ToolCall]:
+    calls = []
+    for tool, raw in INJECTED_CALL.findall(text):
+        try:
+            args = json.loads(raw)
+            if isinstance(args, dict):
+                calls.append(ToolCall(tool, {str(k): str(v) for k, v in args.items()}))
+        except (ValueError, TypeError):
+            continue  # Malformed injected text is ignored, as a parser would.
+    return calls
 
 
-@dataclass
-class _State:
-    step: Step = Step.READ_SOURCE
-    source: str = ""
-    facts: dict[str, str] = field(default_factory=dict)
-    intents: list[ToolCall] = field(default_factory=list)
+def learn(facts: dict[str, str], call: ToolCall, output: str) -> None:
+    if call.tool == "read_document":
+        for name, pattern in FACTS.items():
+            match = pattern.search(output)
+            if match and name not in facts:
+                facts[name] = match.group(1).strip()
+    elif call.tool == "read_memory" and call.args.get("key", "").startswith("payee/"):
+        facts["payee"] = output
+
+
+def bind(intent: ToolCall, facts: dict[str, str]) -> ToolCall:
+    return ToolCall(intent.tool, {k: Template(v).safe_substitute(facts) for k, v in intent.args.items()})
 
 
 def plan(scenario: Scenario) -> tuple[ToolCall, ...]:
-    """Produce the agent's intended calls once. The runner replays them in each environment."""
-    doc_id = next(iter(scenario.documents))
-    state = _State()
-    for _ in range(MAX_STEPS):
-        if state.step is Step.READ_SOURCE:
-            state.intents.append(ToolCall("read_document", {"doc_id": doc_id}))
-            state.source = scenario.documents[doc_id]
-            state.step = Step.EXTRACT
-        elif state.step is Step.EXTRACT:
-            for key, pattern in (("number", INVOICE_NUMBER), ("total", INVOICE_TOTAL)):
-                match = pattern.search(state.source)
-                if match:
-                    state.facts[key] = match.group(1).strip()
-            state.step = Step.FOLLOW_INSTRUCTIONS
-        elif state.step is Step.FOLLOW_INSTRUCTIONS:
-            for tool, raw_args in INJECTED_CALL.findall(state.source):
-                try:
-                    args = json.loads(raw_args)
-                    state.intents.append(ToolCall(tool, {str(k): str(v) for k, v in args.items()}))
-                except (ValueError, TypeError):
-                    continue  # Malformed injected text is ignored, as a parser would.
-            state.step = Step.REPORT
-        elif state.step is Step.REPORT:
-            body = f"Invoice {state.facts.get('number', '?')} total {state.facts.get('total', '?')}"
-            state.intents.append(ToolCall("write_report", {"report_id": "summary", "body": body}))
-            state.step = Step.DONE
-        else:
-            return tuple(state.intents)
-    raise RuntimeError("agent exceeded step bound")
+    gateway = Gateway(Environment.from_scenario(scenario), policy=None)
+    queue: deque[ToolCall] = deque(scenario.plan)
+    facts: dict[str, str] = {}
+    intents: list[ToolCall] = []
+    while queue:
+        if len(intents) >= MAX_STEPS:
+            raise RuntimeError("agent exceeded step bound")
+        intent = queue.popleft()
+        intents.append(intent)
+        call = bind(intent, facts)
+        record = gateway.execute(call)
+        if record.output:
+            learn(facts, call, record.output)
+            queue.extendleft(reversed(injected_calls(record.output)))
+    return tuple(intents)

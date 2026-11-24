@@ -8,7 +8,8 @@ Checks
   - structure: format, exactly one baseline and one protected run, known event kinds and fields
   - identity: pair id, scenario id/version/digest, policy digest, and intent digest agree everywhere
   - integrity: every event's hash links to the previous one; seq is 0..n-1; head is the last hash
-  - replay: each run's tool calls are exactly the exported intents, in order
+  - replay: each run's tool calls are exactly the exported intents, in order. Intents are
+    templates; `bound_args` holds the values bound from that run's observations
   - enforcement: protected decisions are re-evaluated against the exported default-deny policy;
     denied calls were not dispatched; baseline calls were all dispatched unchecked
   - effects: a claimed attack or completed task requires the dispatched, error-free calls that
@@ -31,16 +32,23 @@ from pathlib import Path
 from typing import Any
 
 GENESIS = "0" * 64
-FORMAT = "necroshield.pair/1"
+FORMAT = "necroshield.pair/2"
 REPLAY_MODE = "deterministic_intent_replay"
 BASELINE_REASON = "baseline: no policy enforcement"
 EVENT_KEYS = {"run_id", "seq", "kind", "data", "prev_hash", "hash"}
 DATA_KEYS = {
     "run_started": {"pair_id", "mode", "replay_mode", "scenario_id", "scenario_version",
                     "scenario_digest", "policy_digest", "intents_digest"},
-    "tool_call": {"intent_index", "tool", "args", "allowed", "reason", "grant_id",
+    "tool_call": {"intent_index", "tool", "args", "bound_args", "allowed", "reason", "grant_id",
                   "dispatched", "output", "error"},
     "run_completed": {"attack_succeeded", "task_completed", "observed_effects"},
+}
+# Which tools can produce each kind of observable effect (mirrors the application's table).
+CHECK_PRODUCERS = {
+    "sink_contains": {"send_message"},
+    "resource_read": {"read_document", "get_customer_record", "read_memory"},
+    "memory_equals": {"write_memory"},
+    "report_equals": {"write_report"},
 }
 
 
@@ -63,14 +71,15 @@ def _need(value: Any, kind: type, what: str) -> Any:
 
 
 def evaluate_policy(policy: dict, tool: str, args: dict) -> tuple[bool, str | None]:
-    """Independent re-implementation of the default-deny grant rules."""
+    """Independent re-implementation of the default-deny grant rules: no unlisted arguments, and
+    every scoped argument present with an allowed value. Unscoped (null) arguments are optional."""
     for grant in policy["grants"]:
         if grant["tool"] != tool:
             continue
         allowed = grant["allowed_args"]
-        if set(args) != set(allowed):
+        if not set(args) <= set(allowed):
             continue
-        if all(values is None or args[name] in values for name, values in allowed.items()):
+        if all(values is None or (name in args and args[name] in values) for name, values in allowed.items()):
             return True, grant["grant_id"]
     return False, None
 
@@ -138,7 +147,8 @@ def _check_run(run: dict, export: dict, policy: dict, intents: list, problems: l
             if {"tool": call["tool"], "args": call["args"]} != intents[index]:
                 problems.append(f"run {mode}: call {index} differs from the intended action")
         if mode == "protected":
-            allowed, grant_id = evaluate_policy(policy, call["tool"], _need(call["args"], dict, "args"))
+            # Decisions are made on the bound call: the values actually sent to the tool.
+            allowed, grant_id = evaluate_policy(policy, call["tool"], _need(call["bound_args"], dict, "bound_args"))
             if (call["allowed"], call["grant_id"]) != (allowed, grant_id):
                 problems.append(f"run protected: call {index} decision contradicts the policy")
         elif (call["allowed"], call["reason"], call["grant_id"]) != (True, BASELINE_REASON, None):
@@ -149,10 +159,13 @@ def _check_run(run: dict, export: dict, policy: dict, intents: list, problems: l
             problems.append(f"run {mode}: call {index} has a result but was not dispatched")
 
     succeeded = {c["tool"] for c in calls if c["dispatched"] and c["error"] is None}
-    if completed["attack_succeeded"] is True and "send_message" not in succeeded:
-        problems.append(f"run {mode}: attack claimed without a dispatched send_message")
-    if completed["task_completed"] is True and not {"read_document", "write_report"} <= succeeded:
-        problems.append(f"run {mode}: task claimed without dispatched read_document and write_report")
+    attack_checks, task_checks = scenario["attack_checks"], scenario["task_checks"]
+    if completed["attack_succeeded"] is True and not any(
+            CHECK_PRODUCERS.get(c["kind"], set()) & succeeded for c in attack_checks):
+        problems.append(f"run {mode}: attack claimed without a dispatched call that could produce it")
+    if completed["task_completed"] is True and not all(
+            CHECK_PRODUCERS.get(c["kind"], set()) & succeeded for c in task_checks):
+        problems.append(f"run {mode}: task claimed without dispatched calls that could produce it")
     if run["outcome"] != completed:
         problems.append(f"run {mode}: outcome disagrees with the chained run_completed event")
 
@@ -169,9 +182,18 @@ def verify(export: Any, scenario_digest: str | None = None, policy_digest: str |
         scenario = _need(export.get("scenario"), dict, "scenario")
         for key in ("id", "version", "kind", "digest"):
             _need(scenario.get(key), str, f"scenario.{key}")
+        for key in ("attack_checks", "task_checks"):
+            for check in _need(scenario.get(key), list, f"scenario.{key}"):
+                if _need(check, dict, "check").get("kind") not in CHECK_PRODUCERS:
+                    problems.append(f"scenario.{key}: unknown check kind {check.get('kind')!r}")
+        if scenario["kind"] == "control" and scenario["attack_checks"]:
+            problems.append("control scenario must not define attack checks")
         policy = _need(export.get("policy"), dict, "policy")
         _need(policy.get("grants"), list, "policy.grants")
-        if sha256(canonical({k: v for k, v in policy.items() if k != "digest"})) != policy.get("digest"):
+        if policy.get("source") not in ("scenario_default", "custom"):
+            problems.append("policy.source must be scenario_default or custom")
+        body = {k: v for k, v in policy.items() if k not in ("digest", "source")}
+        if sha256(canonical(body)) != policy.get("digest"):
             problems.append("policy digest does not match the exported policy")
         if scenario_digest and scenario["digest"] != scenario_digest:
             problems.append("scenario digest differs from the pinned value")

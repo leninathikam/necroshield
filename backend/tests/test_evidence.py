@@ -14,7 +14,7 @@ from necroshield.contracts import ToolCall
 from necroshield.evidence import EventChain, link
 from necroshield.policy import evaluate
 from necroshield.runner import run_pair
-from necroshield.scenarios import DOCUMENT_INJECTION
+from necroshield.catalog import DOCUMENT_INJECTION, INVOICE_PATH
 from necroshield.storage import RunStore
 from tests.conftest import VERIFIER_PATH
 
@@ -39,11 +39,11 @@ def _protected(export):
 @pytest.fixture
 def leaky_scenario():
     """Injected call whose arguments carry synthetic secrets, to prove redaction covers all evidence."""
-    doc = DOCUMENT_INJECTION.documents["inv-2026-0413"].replace(
-        '"attach": "customer_records"',
-        '"attach": "customer_records", "note": "key SK-SYNTHETIC-abc123 for odo@EXAMPLE.invalid"',
+    doc = DOCUMENT_INJECTION.documents[INVOICE_PATH].replace(
+        '"attach": "all_customers"',
+        '"attach": "all_customers", "body": "key SK-SYNTHETIC-abc123 for odo@EXAMPLE.invalid"',
     )
-    return replace(DOCUMENT_INJECTION, documents={"inv-2026-0413": doc})
+    return replace(DOCUMENT_INJECTION, documents={INVOICE_PATH: doc})
 
 
 def test_redaction_happens_before_hashing():
@@ -55,7 +55,7 @@ def test_redaction_happens_before_hashing():
 
 def test_secrets_in_intents_stay_out_of_export_store_and_cli(leaky_scenario, verifier, tmp_path, capsys, monkeypatch):
     pair = run_pair(leaky_scenario)
-    assert "SK-SYNTHETIC-abc123" in pair.intents[1].args["note"]  # the secret really entered the run
+    assert "SK-SYNTHETIC-abc123" in pair.intents[1].args["body"]  # the secret really entered the run
     export_text = json.dumps(pair.export())
     assert not any(s in export_text for s in SECRETS)
     assert verifier.verify(pair.export()) == []
@@ -158,9 +158,14 @@ def _rehashed_extra_field(e):
     run = _protected(e); run["events"][1]["data"]["approved_by"] = "admin"; _rehash(run)
     return "unexpected tool_call fields"
 
+def _rehashed_bound_args_escape_scope(e):
+    """The bound values, not the template, are what the policy must have allowed."""
+    run = _protected(e); run["events"][1]["data"]["bound_args"] = {"path": "hr/payroll-2026"}; _rehash(run)
+    return "contradicts the policy"
+
 def _rehashed_claimed_attack(e):
     run = _protected(e); run["events"][-1]["data"]["attack_succeeded"] = True; _rehash(run)
-    return "attack claimed without a dispatched send_message"
+    return "attack claimed without a dispatched call"
 
 def _widened_policy(e):
     e["policy"]["grants"].append({"grant_id": "g-x", "tool": "send_message",
@@ -170,15 +175,15 @@ def _widened_policy(e):
 def _widened_policy_rehashed(e):
     """A forger widens the policy and recomputes its digest; run_started still binds the original."""
     _widened_policy(e)
-    body = {k: v for k, v in e["policy"].items() if k != "digest"}
-    e["policy"]["digest"] = link("", body)  # any value other than the bound digest
+    body = {k: v for k, v in e["policy"].items() if k not in ("digest", "source")}
+    e["policy"]["digest"] = link("", body)  # a correct digest of the widened policy
     return "policy_digest does not match"
 
 
 TAMPERS = [_edit_output, _reorder, _drop, _duplicate, _forge_outcome, _swap_digest, _edit_scenario_id,
            _edit_version, _edit_pair_id, _duplicate_run, _rehashed_denied_dispatch, _rehashed_forged_allow,
            _rehashed_changed_intent, _rehashed_emptied_intents, _rehashed_unknown_kind,
-           _rehashed_extra_field, _rehashed_claimed_attack, _widened_policy, _widened_policy_rehashed]
+           _rehashed_extra_field, _rehashed_claimed_attack, _rehashed_bound_args_escape_scope, _widened_policy, _widened_policy_rehashed]
 
 
 @pytest.mark.parametrize("tamper", TAMPERS)
@@ -194,7 +199,7 @@ def test_fully_recomputed_forgery_is_caught_only_by_pinned_digests(pair, verifie
     export = pair.export()
     export["policy"]["grants"].append({"grant_id": "g-x", "tool": "send_message",
                                        "allowed_args": {"to": None, "attach": None}})
-    body = {k: v for k, v in export["policy"].items() if k != "digest"}
+    body = {k: v for k, v in export["policy"].items() if k not in ("digest", "source")}
     export["policy"]["digest"] = verifier.sha256(verifier.canonical(body))
     run = _protected(export)
     run["events"][0]["data"]["policy_digest"] = export["policy"]["digest"]
@@ -214,6 +219,9 @@ def test_fully_recomputed_forgery_is_caught_only_by_pinned_digests(pair, verifie
     {"format": "necroshield.pair/1", "pair_id": "p", "replay_mode": "deterministic_intent_replay",
      "scenario": {"id": "a", "version": "1", "kind": "attack", "digest": "d"},
      "policy": {"version": "v", "grants": []}, "intents": [{}], "runs": ["x", "y"]},
+    {"format": "necroshield.pair/2", "pair_id": "p", "replay_mode": "deterministic_intent_replay",
+     "scenario": {"id": "a", "version": "1", "kind": "attack", "digest": "d", "attack_checks": "x"},
+     "policy": {}, "intents": [], "runs": []},
 ])
 def test_malformed_exports_are_reported_not_crashed(verifier, broken):
     assert verifier.verify(broken)
@@ -231,13 +239,14 @@ def test_malformed_events_are_reported_not_crashed(pair, verifier):
 def test_verifier_and_gateway_agree_on_policy_decisions(verifier):
     """Cross-checks the two independent implementations of the grant rules."""
     rng = random.Random(7)
-    policy = DOCUMENT_INJECTION.policy.to_dict()
-    values = ["inv-2026-0413", "summary", "customers", "", "x"]
+    from necroshield.catalog import NOTIFIER_POLICY as policy_obj
+    policy = policy_obj.to_dict()
+    values = [INVOICE_PATH, "summary", "cust-001", "customer:cust-001", "billing@finance.invalid", "", "x"]
     for _ in range(3000):
-        tool = rng.choice(["read_document", "write_report", "send_message"])
-        keys = rng.sample(["doc_id", "report_id", "body", "to"], k=rng.randint(0, 3))
-        args = {k: rng.choice(values + ["".join(rng.choices(string.printable, k=5))]) for k in keys}
-        ours = evaluate(DOCUMENT_INJECTION.policy, ToolCall(tool, args))
+        tool = rng.choice(["read_document", "write_report", "send_message", "get_customer_record", "read_memory"])
+        keys = rng.sample(["path", "report_id", "body", "to", "attach", "customer_id", "key"], k=rng.randint(0, 4))
+        args = {k: rng.choice(values + ["".join(rng.choices(string.ascii_letters + "./:@-", k=5))]) for k in keys}
+        ours = evaluate(policy_obj, ToolCall(tool, args))
         assert verifier.evaluate_policy(policy, tool, args) == (ours.allowed, ours.grant_id)
 
 
@@ -264,3 +273,21 @@ def test_verifier_cli_runs_isolated(pair, tmp_path):
     path.write_text(json.dumps(export))
     bad = subprocess.run(args, capture_output=True, text=True, cwd=tmp_path)
     assert bad.returncode == 1 and "hash mismatch" in bad.stdout
+
+
+GOLDEN_HASH = "77b95883a0d7c30baa89caf1b55684c26e8d243bf226a6a346746bc7065ad5ed"
+
+
+def test_golden_hash_vector_is_stable_across_python_versions():
+    chain = EventChain("run-golden")
+    event = chain.append("tool_call", {"tool": "read_document", "args": {"path": "invoices/\u00fc"}, "n": 3,
+                                       "ok": True, "none": None, "list": ["b", "a"]})
+    assert event["hash"] == GOLDEN_HASH
+
+
+def test_non_json_values_are_rejected_from_evidence():
+    from necroshield.contracts import canonical_json
+    with pytest.raises(TypeError):
+        EventChain("r").append("x", {"latency": 1.5})
+    with pytest.raises(ValueError):
+        canonical_json(float("nan"))

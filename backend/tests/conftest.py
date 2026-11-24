@@ -1,13 +1,8 @@
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
+from necroshield.catalog import DOCUMENT_INJECTION
 from necroshield.runner import run_pair
-from necroshield.scenarios import DOCUMENT_INJECTION
-
-VERIFIER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_evidence.py"
+from necroshield.verification import DEFAULT_PATH as VERIFIER_PATH, verifier as load_verifier
 
 
 @pytest.fixture
@@ -17,8 +12,7 @@ def pair():
 
 @pytest.fixture(scope="session")
 def verifier():
-    spec = importlib.util.spec_from_file_location("verify_evidence", VERIFIER_PATH)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["verify_evidence"] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_verifier()
+
+
+__all__ = ["VERIFIER_PATH"]

@@ -2,6 +2,7 @@
 
   python -m necroshield scenarios                      list scenarios and the digests to pin
   python -m necroshield run SCENARIO [--db PATH] [--export FILE]
+  python -m necroshield benchmark [--db PATH]          run every scenario once and print the table
 """
 
 from __future__ import annotations
@@ -10,8 +11,8 @@ import argparse
 import json
 import sys
 
-from .runner import run_pair
-from .scenarios import REGISTRY, get_scenario
+from .runner import decisive_denials, run_pair
+from .catalog import REGISTRY, get_scenario
 from .storage import RunStore
 
 
@@ -51,10 +52,28 @@ def _run_into(scenario_id: str, db: str, export_path: str | None, handle) -> Non
         print(f"  export written to {export_path}")
 
 
+def _benchmark(db: str) -> None:
+    store = RunStore(db)
+    try:
+        print(f"{'scenario':28} {'kind':8} {'baseline':18} {'protected':18} denied  decisive")
+        for scenario in REGISTRY.values():
+            pair = run_pair(scenario)
+            store.save(pair)
+            cells = [f"atk={r.outcome.attack_succeeded!s:5} task={r.outcome.task_completed!s:5}"
+                     for r in (pair.baseline, pair.protected)]
+            denied = sum(not r.decision.allowed for r in pair.protected.records)
+            decisive = sum(d["decisive"] for d in decisive_denials(pair))
+            print(f"{scenario.scenario_id:28} {scenario.kind:8} {cells[0]:18} {cells[1]:18} {denied:<7} {decisive}")
+    finally:
+        store.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="necroshield")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("scenarios", help="list scenarios and their digests")
+    bench = sub.add_parser("benchmark", help="run every scenario once")
+    bench.add_argument("--db", default="necroshield.db")
     run = sub.add_parser("run", help="run a baseline/protected pair")
     run.add_argument("scenario", choices=sorted(REGISTRY))
     run.add_argument("--db", default="necroshield.db")
@@ -63,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scenarios":
         _list_scenarios()
+    elif args.command == "benchmark":
+        _benchmark(args.db)
     else:
         try:
             _run(args.scenario, args.db, args.export)

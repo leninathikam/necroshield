@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -5,38 +6,55 @@ import pytest
 from necroshield.storage import RunStore
 
 
-def test_saved_pair_survives_reopen_and_still_verifies(pair, verifier, tmp_path):
+def test_saved_pair_survives_reopen_and_is_verified_on_load(pair, tmp_path):
     db = tmp_path / "runs.db"
     store = RunStore(db)
     store.save(pair)
     store.close()
 
     reopened = RunStore(db)
-    export = reopened.load_export(pair.pair_id)
-    listing = reopened.list_pairs()
+    stored = reopened.load(pair.pair_id)
+    recent = reopened.recent()
     reopened.close()
 
-    assert export == pair.export()
-    assert verifier.verify(export) == []
-    assert listing[0]["baseline"]["attack_succeeded"] is True
-    assert listing[0]["protected"]["attack_succeeded"] is False
+    assert stored.export == pair.export()
+    assert stored.verified and stored.problems == []
+    assert [p.export["pair_id"] for p in recent] == [pair.pair_id]
 
 
 @pytest.mark.parametrize("statement", [
-    "UPDATE runs SET attack_succeeded = 0",
-    "DELETE FROM events",
     "UPDATE pairs SET export_json = '{}'",
-    "INSERT OR REPLACE INTO runs SELECT run_id, pair_id, mode, scenario_id, scenario_version, head, "
-    "1, 0 FROM runs WHERE mode = 'protected'",
+    "DELETE FROM runs",
+    "INSERT OR REPLACE INTO pairs SELECT pair_id, created_at, scenario_id, scenario_version, scenario_digest, "
+    "policy_digest, policy_source, duration_ms, '{}' FROM pairs",
 ])
 def test_history_is_append_only_through_the_store_connection(pair, tmp_path, statement):
     store = RunStore(tmp_path / "runs.db")
     store.save(pair)
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         store._db.execute(statement)
-    protected = next(p for p in store.list_pairs())["protected"]
-    assert protected == {"attack_succeeded": False, "task_completed": True}
+    assert store.load(pair.pair_id).verified
     store.close()
+
+
+def test_tampering_with_the_database_file_is_reported_on_load(pair, tmp_path):
+    """Triggers are accident protection only. Someone with file access can drop them, so loads verify."""
+    db = tmp_path / "runs.db"
+    store = RunStore(db)
+    store.save(pair)
+    store.close()
+
+    raw = sqlite3.connect(db)
+    raw.execute("DROP TRIGGER pairs_no_update")
+    export = json.loads(raw.execute("SELECT export_json FROM pairs").fetchone()[0])
+    export["runs"][1]["outcome"]["attack_succeeded"] = True
+    raw.execute("UPDATE pairs SET export_json = ?", (json.dumps(export),))
+    raw.commit()
+    raw.close()
+
+    stored = RunStore(db).load(pair.pair_id)
+    assert not stored.verified
+    assert any("outcome disagrees" in p for p in stored.problems)
 
 
 def test_run_ids_cannot_be_reused(pair, tmp_path):
@@ -55,6 +73,6 @@ def test_cli_refuses_to_overwrite_evidence_and_records_nothing(tmp_path, capsys)
     assert main(["run", "document_injection", "--db", str(tmp_path / "runs.db"), "--export", str(export)]) == 1
     assert export.read_text() == "earlier evidence"
     store = RunStore(tmp_path / "runs.db")
-    assert store.list_pairs() == []
+    assert store.count() == 0
     store.close()
     assert "refusing to overwrite" in capsys.readouterr().err

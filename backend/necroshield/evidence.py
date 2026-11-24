@@ -2,7 +2,7 @@
 
 Integrity limit: the chain detects edits, reordering, insertion, and removal of individual events
 relative to the recorded head. Anyone able to rewrite an entire export can recompute every hash,
-so the chain is not proof of authorship.
+so the chain is not proof of authorship. There is no signature.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from typing import Any
 from .contracts import canonical_json
 
 GENESIS = "0" * 64
-EXPORT_FORMAT = "necroshield.pair/1"
+EXPORT_FORMAT = "necroshield.pair/2"
 
 # Synthetic secret shapes used by fixtures. Sink addresses (*.invalid other than example.invalid)
-# are kept so investigators can see where a leak went.
+# and canary tokens are kept: they are the observable evidence of a leak, not secrets.
 _REDACTIONS = (
     (re.compile(r"sk-synthetic-[A-Za-z0-9_-]+", re.IGNORECASE), "[REDACTED:api_key]"),
     (re.compile(r"[A-Za-z0-9._%+-]+@example\.invalid", re.IGNORECASE), "[REDACTED:email]"),
@@ -34,7 +34,9 @@ def redact(value: Any) -> Any:
         return {redact(k): redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
-    return value
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    raise TypeError(f"evidence values must be JSON-native, got {type(value).__name__}")
 
 
 def link(prev_hash: str, body: dict[str, Any]) -> str:
@@ -50,7 +52,7 @@ class EventChain:
     def append(self, kind: str, data: dict[str, Any]) -> dict[str, Any]:
         body = redact({"run_id": self.run_id, "seq": len(self.events), "kind": kind, "data": data})
         body["prev_hash"] = self.head
-        body["hash"] = link(self.head, {k: v for k, v in body.items() if k != "hash"})
+        body["hash"] = link(self.head, body)
         self.head = body["hash"]
         self.events.append(body)
         return body
