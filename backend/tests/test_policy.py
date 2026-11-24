@@ -1,3 +1,6 @@
+"""Policy tests. The seeded generators stand in for Hypothesis, which cannot be installed in the
+current environment; each checks a property that does not restate the implementation."""
+
 import random
 import string
 
@@ -10,6 +13,19 @@ from necroshield.runner import run_once
 from necroshield.scenarios import DOCUMENT_INJECTION
 
 POLICY = DOCUMENT_INJECTION.policy
+GRANTED_TOOLS = {g.tool for g in POLICY.grants}
+SEED = 20261124
+
+
+def _text(rng: random.Random) -> str:
+    return "".join(rng.choices(string.printable, k=rng.randint(0, 24)))
+
+
+def _granted_example(rng: random.Random) -> ToolCall:
+    """A call built from a grant: fixed values from the allow-list, free text where allowed."""
+    grant = rng.choice(POLICY.grants)
+    args = {k: (rng.choice(v) if v is not None else _text(rng)) for k, v in grant.allowed_args.items()}
+    return ToolCall(grant.tool, args)
 
 
 def test_ungranted_tool_is_denied():
@@ -27,33 +43,41 @@ def test_arguments_outside_grant_are_denied(args, reason):
     assert not decision.allowed and reason in decision.reason
 
 
+def test_calls_built_from_grants_are_allowed_including_free_text_fields():
+    rng = random.Random(SEED)
+    seen = set()
+    for _ in range(500):
+        call = _granted_example(rng)
+        decision = evaluate(POLICY, call)
+        assert decision.allowed, call
+        seen.add(decision.grant_id)
+    assert seen == {g.grant_id for g in POLICY.grants}
+
+
+def test_any_tool_without_a_grant_is_denied_whatever_its_arguments():
+    rng = random.Random(SEED)
+    for _ in range(500):
+        tool = rng.choice(["send_message", "delete_all", "read_memory", "exec", "write_memory"])
+        args = {rng.choice(["to", "doc_id", "path", "body"]): _text(rng) for _ in range(rng.randint(0, 3))}
+        assert not evaluate(POLICY, ToolCall(tool, args)).allowed
+
+
+def test_adding_an_argument_or_leaving_scope_turns_allow_into_deny():
+    rng = random.Random(SEED)
+    for _ in range(500):
+        call = _granted_example(rng)
+        extra = dict(call.args, **{"x_" + rng.choice(string.ascii_lowercase): _text(rng)})
+        assert not evaluate(POLICY, ToolCall(call.tool, extra)).allowed
+        grant = next(g for g in POLICY.grants if g.tool == call.tool)
+        for name, values in grant.allowed_args.items():
+            if values is not None:
+                outside = dict(call.args, **{name: _text(rng) + "-out"})
+                assert not evaluate(POLICY, ToolCall(call.tool, outside)).allowed
+
+
 def test_matching_call_records_grant_id():
     decision = evaluate(POLICY, ToolCall("read_document", {"doc_id": "inv-2026-0413"}))
     assert decision.allowed and decision.grant_id == "g-read-invoice"
-
-
-def _random_call(rng: random.Random) -> ToolCall:
-    tool = rng.choice(["read_document", "write_report", "send_message", "delete_all", "read_memory"])
-    keys = rng.sample(["doc_id", "report_id", "body", "to", "attach", "path"], k=rng.randint(0, 3))
-    pool = ["inv-2026-0413", "summary", "customers", "", *("".join(rng.choices(string.printable, k=8)),)]
-    return ToolCall(tool, {k: rng.choice(pool) for k in keys})
-
-
-def _covered(call: ToolCall) -> bool:
-    for grant in POLICY.grants:
-        if grant.tool != call.tool or set(call.args) != set(grant.allowed_args):
-            continue
-        if all(v is None or call.args[k] in v for k, v in grant.allowed_args.items()):
-            return True
-    return False
-
-
-def test_seeded_random_calls_are_allowed_only_when_a_grant_covers_them():
-    # Seeded generative check standing in for Hypothesis until it can be installed.
-    rng = random.Random(20261124)
-    for _ in range(2000):
-        call = _random_call(rng)
-        assert evaluate(POLICY, call).allowed == _covered(call), call
 
 
 def test_denied_calls_never_reach_tool_code(monkeypatch):
@@ -68,3 +92,22 @@ def test_denied_calls_never_reach_tool_code(monkeypatch):
     result = run_once(DOCUMENT_INJECTION, intents, RunMode.PROTECTED)
     assert invoked == ["write_report"]
     assert [r.dispatched for r in result.records] == [False, False, True]
+
+
+def test_faulty_tool_is_recorded_and_the_run_continues(monkeypatch):
+    def broken(env, args):
+        raise ZeroDivisionError
+    monkeypatch.setitem(tools.TOOLS, "read_document", broken)
+    intents = (ToolCall("read_document", {"doc_id": "inv-2026-0413"}),
+               ToolCall("write_report", {"report_id": "summary", "body": "x"}))
+    result = run_once(DOCUMENT_INJECTION, intents, RunMode.PROTECTED)
+    assert result.records[0].error == "tool fault: ZeroDivisionError"
+    assert result.events[-1]["kind"] == "run_completed"
+
+
+@pytest.mark.parametrize("to", ["http://evil.example/x.invalid", "a@b.invalid.com", "a@sink.invalid\n"])
+def test_sink_rejects_addresses_outside_the_invalid_tld(to):
+    env = tools.Environment.from_scenario(DOCUMENT_INJECTION)
+    with pytest.raises(tools.ToolError):
+        tools.invoke(env, "send_message", {"to": to})
+    assert env.sink == []

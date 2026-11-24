@@ -22,5 +22,9 @@ Every entry records work actually done in a Kiro session, along with the command
 - `python3 -m pytest -rA`: 31 passed, 0 failed, 0 skipped.
 - CLI pair: baseline leaked the canary, protected denied `send_message` before dispatch, and both runs completed the report. The standalone verifier printed `OK ... (10 events)`.
 
+**Independent review (subagent `semantic_reviewer`)**
+- Reviewed `54130f8..ea791bb` and ran its own probes. Confirmed defects included unredacted secrets in exported intents, a forged-allow decision that still verified, a storage trigger bypass via `INSERT OR REPLACE`, and vacuous tests. The full list and fixes are in `evidence/phase1-report.md`.
+- After the fixes: `python3 -m pytest -rA` gave 61 passed, 0 failed, 0 skipped. Pinned-digest verification of a fresh export printed `OK ... 10 events (digests pinned)`.
+
 **Not done in this session**
-- No subagent review yet, no MCP inspector, no UI.
+- No MCP inspector, no API, no UI (they need packages the sandbox cannot install).

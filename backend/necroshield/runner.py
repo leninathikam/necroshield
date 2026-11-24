@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from . import agent
-from .contracts import REPLAY_MODE, Decision, DispatchRecord, Outcome, RunMode, ToolCall
+from .contracts import REPLAY_MODE, Decision, DispatchRecord, Outcome, RunMode, ToolCall, canonical_json
 from .evaluator import evaluate_outcome
-from .evidence import EXPORT_FORMAT, EventChain
+from .evidence import EXPORT_FORMAT, EventChain, redact
 from .policy import evaluate
 from .scenarios import Scenario
 from .tools import Environment, ToolError, invoke
 
 _UNCHECKED = Decision(True, "baseline: no policy enforcement")
+
+
+def redacted_intents(intents: tuple[ToolCall, ...]) -> list[dict[str, Any]]:
+    """The form in which intents appear in evidence. Raw intents never leave the process."""
+    return redact([c.to_dict() for c in intents])
+
+
+def intents_digest(intents: tuple[ToolCall, ...]) -> str:
+    return hashlib.sha256(canonical_json(redacted_intents(intents)).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -25,6 +36,11 @@ class RunResult:
     outcome: Outcome
     events: tuple[dict[str, Any], ...]
     head: str
+
+    def export(self) -> dict[str, Any]:
+        # The exported outcome is the chained run_completed data, so it is redacted and hash-bound.
+        return {"run_id": self.run_id, "mode": self.mode.value, "outcome": self.events[-1]["data"],
+                "head": self.head, "events": list(self.events)}
 
 
 @dataclass(frozen=True)
@@ -37,25 +53,15 @@ class PairResult:
 
     def export(self) -> dict[str, Any]:
         s = self.scenario
-        return {
+        return copy.deepcopy({
             "format": EXPORT_FORMAT,
             "pair_id": self.pair_id,
             "replay_mode": REPLAY_MODE,
             "scenario": {"id": s.scenario_id, "version": s.version, "kind": s.kind, "digest": s.digest()},
-            "policy_version": s.policy.version,
-            "intents": [c.to_dict() for c in self.intents],
-            "runs": [_export_run(r) for r in (self.baseline, self.protected)],
-        }
-
-
-def _export_run(run: RunResult) -> dict[str, Any]:
-    return {
-        "run_id": run.run_id,
-        "mode": run.mode.value,
-        "outcome": asdict(run.outcome) | {"observed_effects": list(run.outcome.observed_effects)},
-        "head": run.head,
-        "events": list(run.events),
-    }
+            "policy": {"digest": s.policy.digest(), **s.policy.to_dict()},
+            "intents": redacted_intents(self.intents),
+            "runs": [self.baseline.export(), self.protected.export()],
+        })
 
 
 def _dispatch(env: Environment, call: ToolCall, decision: Decision) -> DispatchRecord:
@@ -65,16 +71,19 @@ def _dispatch(env: Environment, call: ToolCall, decision: Decision) -> DispatchR
         return DispatchRecord(call, decision, dispatched=True, output=invoke(env, call.tool, call.args))
     except ToolError as exc:
         return DispatchRecord(call, decision, dispatched=True, error=str(exc))
+    except Exception as exc:  # A faulty tool must not abort the run or skip its evidence event.
+        return DispatchRecord(call, decision, dispatched=True, error=f"tool fault: {type(exc).__name__}")
 
 
-def run_once(scenario: Scenario, intents: tuple[ToolCall, ...], mode: RunMode) -> RunResult:
+def run_once(scenario: Scenario, intents: tuple[ToolCall, ...], mode: RunMode, pair_id: str = "") -> RunResult:
     run_id = str(uuid.uuid4())
     env = Environment.from_scenario(scenario)
     chain = EventChain(run_id)
     chain.append("run_started", {
-        "mode": mode.value, "replay_mode": REPLAY_MODE, "scenario_id": scenario.scenario_id,
-        "scenario_version": scenario.version, "scenario_digest": scenario.digest(),
-        "policy_version": scenario.policy.version,
+        "pair_id": pair_id, "mode": mode.value, "replay_mode": REPLAY_MODE,
+        "scenario_id": scenario.scenario_id, "scenario_version": scenario.version,
+        "scenario_digest": scenario.digest(), "policy_digest": scenario.policy.digest(),
+        "intents_digest": intents_digest(intents),
     })
     records = []
     for index, call in enumerate(intents):
@@ -96,10 +105,11 @@ def run_once(scenario: Scenario, intents: tuple[ToolCall, ...], mode: RunMode) -
 
 def run_pair(scenario: Scenario) -> PairResult:
     intents = agent.plan(scenario)
+    pair_id = str(uuid.uuid4())
     return PairResult(
-        pair_id=str(uuid.uuid4()),
+        pair_id=pair_id,
         scenario=scenario,
         intents=intents,
-        baseline=run_once(scenario, intents, RunMode.BASELINE),
-        protected=run_once(scenario, intents, RunMode.PROTECTED),
+        baseline=run_once(scenario, intents, RunMode.BASELINE, pair_id),
+        protected=run_once(scenario, intents, RunMode.PROTECTED, pair_id),
     )

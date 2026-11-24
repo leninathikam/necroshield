@@ -17,8 +17,9 @@ Requires Python 3.11+. The core has no third-party dependencies; tests need pyte
 ```
 cd backend
 python3 -m pytest
+python3 -m necroshield scenarios          # prints the scenario and policy digests to pin
 python3 -m necroshield run document_injection --export pair.json
-python3 ../scripts/verify_evidence.py pair.json
+python3 ../scripts/verify_evidence.py pair.json --scenario-digest <digest> --policy-digest <digest>
 ```
 
 ## Layout
@@ -28,7 +29,7 @@ python3 ../scripts/verify_evidence.py pair.json
 - `docs/adr/`: architecture decisions
 
 ## Integrity limits
-The hash chain detects edited, reordered, inserted, or removed events. The verifier also rejects internally inconsistent exports, such as a denied call marked as dispatched, even after the hashes are recomputed. It cannot detect a full, self-consistent forgery, because exports are not signed.
+The hash chain detects edited, reordered, inserted, or removed events. Even when the hashes are recomputed, the verifier rejects exports whose protected decisions contradict the exported policy, whose calls differ from the intents, or whose headers disagree with the chained `run_started` event. A full, self-consistent rewrite (for example, a widened policy with every digest recomputed) passes, unless the scenario and policy digests are pinned from a trusted source. Exports are not signed.
 
 ## License
 MIT

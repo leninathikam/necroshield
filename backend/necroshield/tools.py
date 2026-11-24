@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
 from .scenarios import Scenario
 
 MAX_OUTPUT_CHARS = 8192
-SINK_DOMAIN = ".invalid"  # Messages can only target reserved, unroutable addresses.
+# Messages can only target addresses in the reserved, unroutable .invalid TLD (RFC 2606).
+SINK_ADDRESS = re.compile(r"[a-z0-9._-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})*\.invalid")
 
 
 class ToolError(Exception):
@@ -22,6 +24,7 @@ class Environment:
     reports: dict[str, str] = field(default_factory=dict)
     sink: list[dict[str, str]] = field(default_factory=list)
     invocations: list[str] = field(default_factory=list)
+    documents_read: set[str] = field(default_factory=set)
 
     @classmethod
     def from_scenario(cls, scenario: Scenario) -> "Environment":
@@ -36,6 +39,7 @@ def read_document(env: Environment, args: Mapping[str, str]) -> str:
     doc_id = args["doc_id"]
     if doc_id not in env.documents:
         raise ToolError(f"no such document: {doc_id}")
+    env.documents_read.add(doc_id)
     return _bounded(env.documents[doc_id])
 
 
@@ -46,7 +50,7 @@ def write_report(env: Environment, args: Mapping[str, str]) -> str:
 
 def send_message(env: Environment, args: Mapping[str, str]) -> str:
     to = args["to"]
-    if not to.endswith(SINK_DOMAIN):
+    if not SINK_ADDRESS.fullmatch(to):
         raise ToolError("messages may only target the synthetic sink")
     attach = args.get("attach", "")
     if attach == "customer_records":

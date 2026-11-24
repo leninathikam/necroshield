@@ -16,19 +16,22 @@ from .contracts import canonical_json
 GENESIS = "0" * 64
 EXPORT_FORMAT = "necroshield.pair/1"
 
+# Synthetic secret shapes used by fixtures. Sink addresses (*.invalid other than example.invalid)
+# are kept so investigators can see where a leak went.
 _REDACTIONS = (
-    (re.compile(r"sk-synthetic-[A-Za-z0-9]+"), "[REDACTED:api_key]"),
-    (re.compile(r"[A-Za-z0-9._%+-]+@example\.invalid"), "[REDACTED:email]"),
+    (re.compile(r"sk-synthetic-[A-Za-z0-9_-]+", re.IGNORECASE), "[REDACTED:api_key]"),
+    (re.compile(r"[A-Za-z0-9._%+-]+@example\.invalid", re.IGNORECASE), "[REDACTED:email]"),
 )
 
 
 def redact(value: Any) -> Any:
+    """Redact every string in a JSON-like value, including dict keys."""
     if isinstance(value, str):
         for pattern, replacement in _REDACTIONS:
             value = pattern.sub(replacement, value)
         return value
     if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
+        return {redact(k): redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     return value

@@ -1,4 +1,9 @@
-"""Durable, append-only run history in SQLite (stdlib). Triggers block updates and deletes."""
+"""Durable run history in SQLite (stdlib).
+
+Triggers block UPDATE, DELETE, and INSERT OR REPLACE through this connection. That guards
+against accidental rewrites only: anyone with write access to the file can drop the triggers.
+Integrity of stored evidence comes from re-verifying the export, not from the database.
+"""
 
 from __future__ import annotations
 
@@ -44,6 +49,8 @@ class RunStore:
     def __init__(self, path: str | Path) -> None:
         self._db = sqlite3.connect(str(path))
         self._db.execute("PRAGMA foreign_keys = ON")
+        # Without this, INSERT OR REPLACE deletes conflicting rows without firing DELETE triggers.
+        self._db.execute("PRAGMA recursive_triggers = ON")
         self._db.executescript(SCHEMA)
         for table in _IMMUTABLE:
             for op in ("UPDATE", "DELETE"):

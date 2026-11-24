@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import asdict, dataclass
 
 from .contracts import canonical_json
@@ -21,6 +22,13 @@ class Grant:
 class Policy:
     version: str
     grants: tuple[Grant, ...]
+
+    def to_dict(self) -> dict:
+        """JSON-native form (lists, not tuples), identical before and after a JSON round trip."""
+        return json.loads(canonical_json(asdict(self)))
+
+    def digest(self) -> str:
+        return hashlib.sha256(canonical_json(self.to_dict()).encode()).hexdigest()
 
 
 @dataclass(frozen=True)

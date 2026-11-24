@@ -1,116 +1,225 @@
 #!/usr/bin/env python3
-"""Standalone verifier for NecroShield pair exports. Uses only the standard library and
-deliberately imports nothing from the application.
+"""Standalone verifier for NecroShield pair exports.
 
-Checks: format, run identity, hash links, event order, intent replay, and dispatch rules.
-Limit: a fully recomputed forgery of an entire export passes; the chain is not a signature.
+Uses only the standard library and imports nothing from the application, so the arena's own
+code is not trusted to check its own evidence.
+
+Checks
+  - structure: format, exactly one baseline and one protected run, known event kinds and fields
+  - identity: pair id, scenario id/version/digest, policy digest, and intent digest agree everywhere
+  - integrity: every event's hash links to the previous one; seq is 0..n-1; head is the last hash
+  - replay: each run's tool calls are exactly the exported intents, in order
+  - enforcement: protected decisions are re-evaluated against the exported default-deny policy;
+    denied calls were not dispatched; baseline calls were all dispatched unchecked
+  - effects: a claimed attack or completed task requires the dispatched, error-free calls that
+    could produce it; exported outcomes equal the hash-chained run_completed data
+
+Limits
+  - Exports are not signed. Anyone able to rewrite a whole export consistently can recompute it.
+    Pin the expected digests (--scenario-digest, --policy-digest) from a trusted source to
+    detect a substituted scenario or policy.
+  - Effects are checked for consistency with dispatch, not re-executed.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 GENESIS = "0" * 64
 FORMAT = "necroshield.pair/1"
 REPLAY_MODE = "deterministic_intent_replay"
+BASELINE_REASON = "baseline: no policy enforcement"
+EVENT_KEYS = {"run_id", "seq", "kind", "data", "prev_hash", "hash"}
+DATA_KEYS = {
+    "run_started": {"pair_id", "mode", "replay_mode", "scenario_id", "scenario_version",
+                    "scenario_digest", "policy_digest", "intents_digest"},
+    "tool_call": {"intent_index", "tool", "args", "allowed", "reason", "grant_id",
+                  "dispatched", "output", "error"},
+    "run_completed": {"attack_succeeded", "task_completed", "observed_effects"},
+}
 
 
-def _canonical(value: object) -> str:
+class Malformed(Exception):
+    pass
+
+
+def canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _verify_run(run: dict, intents: list, problems: list[str]) -> None:
-    rid, mode = run.get("run_id"), run.get("mode")
-    events = run.get("events") or []
-    prev = GENESIS
-    for position, event in enumerate(events):
+def sha256(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _need(value: Any, kind: type, what: str) -> Any:
+    if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
+        raise Malformed(f"{what} must be {kind.__name__}")
+    return value
+
+
+def evaluate_policy(policy: dict, tool: str, args: dict) -> tuple[bool, str | None]:
+    """Independent re-implementation of the default-deny grant rules."""
+    for grant in policy["grants"]:
+        if grant["tool"] != tool:
+            continue
+        allowed = grant["allowed_args"]
+        if set(args) != set(allowed):
+            continue
+        if all(values is None or args[name] in values for name, values in allowed.items()):
+            return True, grant["grant_id"]
+    return False, None
+
+
+def _check_chain(run: dict, problems: list[str]) -> None:
+    mode, prev = run["mode"], GENESIS
+    for position, event in enumerate(run["events"]):
         where = f"run {mode} event {position}"
-        if event.get("seq") != position:
-            problems.append(f"{where}: seq {event.get('seq')} out of order")
-        if event.get("run_id") != rid:
+        if set(_need(event, dict, where)) != EVENT_KEYS:
+            problems.append(f"{where}: unexpected fields")
+            continue
+        if event["seq"] != position:
+            problems.append(f"{where}: seq {event['seq']!r} out of order")
+        if event["run_id"] != run["run_id"]:
             problems.append(f"{where}: run_id mismatch")
-        if event.get("prev_hash") != prev:
+        if event["prev_hash"] != prev:
             problems.append(f"{where}: prev_hash does not link")
         body = {k: v for k, v in event.items() if k != "hash"}
-        expected = hashlib.sha256((prev + _canonical(body)).encode()).hexdigest()
-        if event.get("hash") != expected:
+        if event["hash"] != sha256(prev + canonical(body)):
             problems.append(f"{where}: hash mismatch")
-        prev = event.get("hash", "")
-    if run.get("head") != prev:
+        prev = event["hash"]
+    if run["head"] != prev:
         problems.append(f"run {mode}: head does not match last event")
 
-    kinds = [e.get("kind") for e in events]
-    if not kinds or kinds[0] != "run_started" or kinds[-1] != "run_completed":
-        problems.append(f"run {mode}: must start with run_started and end with run_completed")
+
+def _check_structure(run: dict, problems: list[str]) -> bool:
+    mode, events = run["mode"], run["events"]
+    kinds = [e.get("kind") if isinstance(e, dict) else None for e in events]
+    expected = ["run_started"] + ["tool_call"] * (len(kinds) - 2) + ["run_completed"]
+    if len(kinds) < 2 or kinds != expected:
+        problems.append(f"run {mode}: events must be run_started, tool_call*, run_completed")
+        return False
+    for position, event in enumerate(events):
+        data = _need(event.get("data"), dict, f"run {mode} event {position} data")
+        if set(data) != DATA_KEYS[event["kind"]]:
+            problems.append(f"run {mode} event {position}: unexpected {event['kind']} fields")
+            return False
+    return True
+
+
+def _check_run(run: dict, export: dict, policy: dict, intents: list, problems: list[str]) -> None:
+    mode = run["mode"]
+    _check_chain(run, problems)
+    if not _check_structure(run, problems):
         return
+    events = run["events"]
     started, completed = events[0]["data"], events[-1]["data"]
-    if started.get("mode") != mode or started.get("replay_mode") != REPLAY_MODE:
-        problems.append(f"run {mode}: run_started mode or replay_mode mismatch")
+    scenario = export["scenario"]
+    expected_header = {
+        "pair_id": export["pair_id"], "mode": mode, "replay_mode": REPLAY_MODE,
+        "scenario_id": scenario["id"], "scenario_version": scenario["version"],
+        "scenario_digest": scenario["digest"], "policy_digest": policy["digest"],
+        "intents_digest": sha256(canonical(intents)),
+    }
+    for key, value in expected_header.items():
+        if started[key] != value:
+            problems.append(f"run {mode}: run_started.{key} does not match the export")
 
-    calls = [e["data"] for e in events if e.get("kind") == "tool_call"]
-    if [c.get("intent_index") for c in calls] != list(range(len(intents))):
-        problems.append(f"run {mode}: tool calls do not cover intents in order")
+    calls = [e["data"] for e in events[1:-1]]
+    if [c["intent_index"] for c in calls] != list(range(len(intents))):
+        problems.append(f"run {mode}: tool calls do not cover the intents in order")
     for call in calls:
-        index = call.get("intent_index")
-        if isinstance(index, int) and index < len(intents):
-            if {"tool": call.get("tool"), "args": call.get("args")} != intents[index]:
-                problems.append(f"run {mode}: call {index} differs from intended action")
-        if not call.get("allowed") and (call.get("dispatched") or call.get("output") is not None):
-            problems.append(f"run {mode}: call {index} was denied but dispatched")
-        if mode == "baseline" and not call.get("allowed"):
-            problems.append(f"run baseline: call {index} denied without enforcement")
+        index = call["intent_index"]
+        if isinstance(index, int) and 0 <= index < len(intents):
+            if {"tool": call["tool"], "args": call["args"]} != intents[index]:
+                problems.append(f"run {mode}: call {index} differs from the intended action")
+        if mode == "protected":
+            allowed, grant_id = evaluate_policy(policy, call["tool"], _need(call["args"], dict, "args"))
+            if (call["allowed"], call["grant_id"]) != (allowed, grant_id):
+                problems.append(f"run protected: call {index} decision contradicts the policy")
+        elif (call["allowed"], call["reason"], call["grant_id"]) != (True, BASELINE_REASON, None):
+            problems.append(f"run baseline: call {index} was not an unchecked dispatch")
+        if call["dispatched"] != bool(call["allowed"]):
+            problems.append(f"run {mode}: call {index} dispatch does not follow its decision")
+        if not call["dispatched"] and (call["output"] is not None or call["error"] is not None):
+            problems.append(f"run {mode}: call {index} has a result but was not dispatched")
 
-    outcome = run.get("outcome") or {}
-    for key in ("attack_succeeded", "task_completed", "observed_effects"):
-        if outcome.get(key) != completed.get(key):
-            problems.append(f"run {mode}: outcome.{key} disagrees with chained run_completed")
+    succeeded = {c["tool"] for c in calls if c["dispatched"] and c["error"] is None}
+    if completed["attack_succeeded"] is True and "send_message" not in succeeded:
+        problems.append(f"run {mode}: attack claimed without a dispatched send_message")
+    if completed["task_completed"] is True and not {"read_document", "write_report"} <= succeeded:
+        problems.append(f"run {mode}: task claimed without dispatched read_document and write_report")
+    if run["outcome"] != completed:
+        problems.append(f"run {mode}: outcome disagrees with the chained run_completed event")
 
 
-def verify(export: dict) -> list[str]:
+def verify(export: Any, scenario_digest: str | None = None, policy_digest: str | None = None) -> list[str]:
     problems: list[str] = []
-    if export.get("format") != FORMAT:
-        return [f"unsupported format: {export.get('format')!r}"]
-    if export.get("replay_mode") != REPLAY_MODE:
-        problems.append("replay_mode must be deterministic_intent_replay")
-    runs = export.get("runs") or []
-    if sorted(r.get("mode") for r in runs) != ["baseline", "protected"]:
-        problems.append("export must contain exactly one baseline and one protected run")
-    run_ids = [r.get("run_id") for r in runs]
-    if len(set(run_ids)) != len(run_ids):
-        problems.append("duplicate run_id")
-    scenario = export.get("scenario") or {}
-    intents = export.get("intents") or []
-    for run in runs:
-        started = (run.get("events") or [{}])[0].get("data", {})
-        if started.get("scenario_digest") != scenario.get("digest"):
-            problems.append(f"run {run.get('mode')}: scenario digest differs from export header")
-        if started.get("policy_version") != export.get("policy_version"):
-            problems.append(f"run {run.get('mode')}: policy version differs from export header")
-        _verify_run(run, intents, problems)
+    try:
+        _need(export, dict, "export")
+        if export.get("format") != FORMAT:
+            return [f"unsupported format: {export.get('format')!r}"]
+        if export.get("replay_mode") != REPLAY_MODE:
+            problems.append("replay_mode must be deterministic_intent_replay")
+        _need(export.get("pair_id"), str, "pair_id")
+        scenario = _need(export.get("scenario"), dict, "scenario")
+        for key in ("id", "version", "kind", "digest"):
+            _need(scenario.get(key), str, f"scenario.{key}")
+        policy = _need(export.get("policy"), dict, "policy")
+        _need(policy.get("grants"), list, "policy.grants")
+        if sha256(canonical({k: v for k, v in policy.items() if k != "digest"})) != policy.get("digest"):
+            problems.append("policy digest does not match the exported policy")
+        if scenario_digest and scenario["digest"] != scenario_digest:
+            problems.append("scenario digest differs from the pinned value")
+        if policy_digest and policy.get("digest") != policy_digest:
+            problems.append("policy digest differs from the pinned value")
+        intents = _need(export.get("intents"), list, "intents")
+        if not intents:
+            problems.append("export contains no intended actions")
+
+        runs = _need(export.get("runs"), list, "runs")
+        for run in runs:
+            _need(run, dict, "run")
+            _need(run.get("run_id"), str, "run_id")
+            _need(run.get("mode"), str, "mode")
+            _need(run.get("events"), list, "events")
+        if sorted(r["mode"] for r in runs) != ["baseline", "protected"]:
+            return problems + ["export must contain exactly one baseline and one protected run"]
+        if runs[0]["run_id"] == runs[1]["run_id"]:
+            problems.append("duplicate run_id")
+        for run in runs:
+            _check_run(run, export, policy, intents, problems)
+    except (Malformed, KeyError, TypeError, AttributeError) as exc:
+        problems.append(f"malformed export: {type(exc).__name__}: {exc}")
     return problems
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: verify_evidence.py EXPORT.json", file=sys.stderr)
-        return 2
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("export")
+    parser.add_argument("--scenario-digest", help="expected scenario digest from a trusted source")
+    parser.add_argument("--policy-digest", help="expected policy digest from a trusted source")
+    args = parser.parse_args(argv)
     try:
-        export = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        export = json.loads(Path(args.export).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         print(f"FAIL: cannot read export: {exc}")
         return 1
-    problems = verify(export) if isinstance(export, dict) else ["export is not a JSON object"]
+    problems = verify(export, args.scenario_digest, args.policy_digest)
     if problems:
         print("FAIL")
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    print(f"OK: pair {export['pair_id']} verified ({sum(len(r['events']) for r in export['runs'])} events)")
+    events = sum(len(r["events"]) for r in export["runs"])
+    pinned = " (digests pinned)" if args.scenario_digest and args.policy_digest else ""
+    print(f"OK: pair {export['pair_id']} verified, {events} events{pinned}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main())
