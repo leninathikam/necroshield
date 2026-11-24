@@ -26,7 +26,15 @@ export default function Dashboard() {
       </header>
 
       <Load value={scenarios} onRetry={reloadScenarios}>
-        {(list) => <HeroSequence scenarios={list} />}
+        {(list) => (
+          <HeroSequence
+            scenarios={list}
+            onRun={() => {
+              reloadRuns();
+              reloadBench();
+            }}
+          />
+        )}
       </Load>
 
       <div className="grid-3" style={{ marginTop: 16 }}>

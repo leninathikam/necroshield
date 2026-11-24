@@ -1,7 +1,7 @@
 "use client";
 
 import "@xyflow/react/dist/style.css";
-import { Background, Controls, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import { Background, Controls, MarkerType, Position, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import { callState, toolCalls } from "@/lib/events";
 import type { Check, RunExport } from "@/lib/types";
@@ -37,21 +37,27 @@ function box(label: string, detail: string, kind: string) {
   };
 }
 
+/** Left-to-right flow; plain nodes so only our own box is drawn. */
+const LR = { className: "flow-plain", sourcePosition: Position.Right, targetPosition: Position.Left } as const;
+
 function buildGraph(run: RunExport, checks: { attack: Check[]; task: Check[] }, surface: string, step: number) {
   const calls = toolCalls(run);
   const tools = [...new Set(calls.map((c) => c.tool))];
   const protectedRun = run.mode === "protected";
   const nodes: Node[] = [
-    { id: "source", position: { x: 0, y: 0 }, data: box("Attacker-controlled input", surface, "source"), type: "default" },
-    { id: "agent", position: { x: 0, y: 200 }, data: box("Fixture agent", "plans from tool output", "agent") },
     {
-      id: "gateway",
-      position: { x: 290, y: 200 },
+      id: "source", ...LR, sourcePosition: Position.Bottom, position: { x: 0, y: 20 },
+      data: box("Attacker-controlled input", surface, "source"),
+    },
+    { id: "agent", ...LR, targetPosition: Position.Top, position: { x: 0, y: 230 }, data: box("Fixture agent", "plans from tool output", "agent") },
+    {
+      id: "gateway", ...LR,
+      position: { x: 290, y: 230 },
       data: box("Policy gateway", protectedRun ? "default-deny, before dispatch" : "baseline: no enforcement", "gateway"),
     },
     ...tools.map((tool, i) => ({
-      id: `tool:${tool}`,
-      position: { x: 590, y: i * 92 + (200 - ((tools.length - 1) * 92) / 2) },
+      id: `tool:${tool}`, ...LR,
+      position: { x: 600, y: i * 92 + (250 - ((tools.length - 1) * 92) / 2) },
       data: box(tool, "synthetic tool", "tool"),
     })),
   ];
@@ -90,8 +96,8 @@ function buildGraph(run: RunExport, checks: { attack: Check[]; task: Check[] }, 
     shown.forEach(({ c, bad }, i) => {
       const id = `effect:${i}`;
       nodes.push({
-        id,
-        position: { x: 880, y: i * 92 + 60 },
+        id, ...LR,
+        position: { x: 900, y: i * 92 + 60 },
         data: box(bad ? "Attack effect observed" : "Task effect observed", c.description, bad ? "effect-bad" : "effect-good"),
       });
       const producer = (PRODUCERS[c.kind] ?? []).find((t) => tools.includes(t));
@@ -107,8 +113,8 @@ function buildGraph(run: RunExport, checks: { attack: Check[]; task: Check[] }, 
     });
     if (!run.outcome.attack_succeeded && checks.attack.length > 0) {
       nodes.push({
-        id: "effect:none",
-        position: { x: 880, y: shown.length * 92 + 60 },
+        id: "effect:none", ...LR,
+        position: { x: 900, y: shown.length * 92 + 60 },
         data: box("No attack effect", "no attack check held after the run", "effect-good"),
       });
     }
@@ -171,6 +177,7 @@ export function AttackGraph({
       </p>
       <div className="graph" aria-label={`Execution graph for the ${run.mode} run`}>
         <ReactFlow
+          key={graph.nodes.length /* refit when effect nodes appear */}
           nodes={graph.nodes}
           edges={graph.edges}
           fitView

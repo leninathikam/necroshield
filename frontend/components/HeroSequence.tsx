@@ -11,7 +11,7 @@ const STEPS = ["Attack", "Compromise", "Activate defense", "Replay", "Verify"] a
 
 /** Attack → Compromise → Activate Defense → Replay → Verify, driven by a real run on this server.
  * Each step reveals data from the run's evidence; nothing here is pre-rendered. */
-export function HeroSequence({ scenarios }: { scenarios: ScenarioView[] }) {
+export function HeroSequence({ scenarios, onRun }: { scenarios: ScenarioView[]; onRun?: () => void }) {
   const attacks = scenarios.filter((s) => s.kind === "attack");
   const [scenarioId, setScenarioId] = useState(attacks[0]?.id ?? "");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -40,6 +40,7 @@ export function HeroSequence({ scenarios }: { scenarios: ScenarioView[] }) {
       setCheck(recheck);
       setPhase("done");
       setStep(0);
+      onRun?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");

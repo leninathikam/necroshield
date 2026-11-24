@@ -18,6 +18,7 @@ test("dashboard sequence runs a real pair and verifies it", async ({ page }) => 
   await expect(hero).toContainText("Baseline: attack: another customer's token reached the sink", { timeout: 15_000 });
   await expect(hero).toContainText("Denied before dispatch: send_message");
   await expect(hero).toContainText("Standalone verifier: chain links, policy decisions", { timeout: 15_000 });
+  await expect(page.getByRole("link", { name: "document_injection" })).toBeVisible();
   await noHorizontalOverflow(page);
   await shot(page, "dashboard");
   await page.getByRole("link", { name: "Open in Replay Lab" }).click();
