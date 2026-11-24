@@ -34,9 +34,22 @@ def redact(value: Any) -> Any:
         return {redact(k): redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
-    if value is None or isinstance(value, (bool, int)):
+    if value is None or isinstance(value, (bool, int, float)):
         return value
     raise TypeError(f"evidence values must be JSON-native, got {type(value).__name__}")
+
+
+def _reject_floats(value: Any) -> None:
+    """Hashed events carry no floats: float formatting is the least portable part of JSON, and a
+    third-party verifier in another language must reproduce every hash exactly."""
+    if isinstance(value, float):
+        raise TypeError("evidence values must be JSON-native without floats, got float")
+    if isinstance(value, dict):
+        for v in value.values():
+            _reject_floats(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _reject_floats(v)
 
 
 def link(prev_hash: str, body: dict[str, Any]) -> str:
@@ -50,6 +63,7 @@ class EventChain:
         self.head = GENESIS
 
     def append(self, kind: str, data: dict[str, Any]) -> dict[str, Any]:
+        _reject_floats(data)
         body = redact({"run_id": self.run_id, "seq": len(self.events), "kind": kind, "data": data})
         body["prev_hash"] = self.head
         body["hash"] = link(self.head, body)

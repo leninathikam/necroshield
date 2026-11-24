@@ -1,0 +1,7 @@
+# Synthetic fixture values only. These shapes never correspond to real credentials.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "synthetic canary tokens and fake keys used by NecroShield scenarios"
+regexes = ['''CANARY-[A-Z]+-[0-9A-F]{4}''', '''sk-synthetic-[0-9a-z]+''', '''ACCT-[A-Z]+-[0-9]+''']

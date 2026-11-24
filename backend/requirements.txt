@@ -1,5 +1,6 @@
 # Runtime dependencies for the API service and MCP sandbox. The core package needs none of these.
-fastapi
-uvicorn
-mcp>=1.30,<2
-httpx
+# Transitive versions are locked in constraints.txt.
+fastapi==0.165.0
+uvicorn==0.54.0
+mcp==1.30.0
+httpx==0.28.1

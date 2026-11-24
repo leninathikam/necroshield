@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     defaults:
       run:
         working-directory: backend
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -r requirements-test.txt
+      - run: pip install -r requirements-test.txt -c constraints.txt
       - name: unit, scenario regression, and property tests
         run: python -m pytest -o addopts="" -q -rs tests
 
@@ -72,9 +72,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt -r requirements-test.txt && pip freeze --all | sed 's/^/RESOLVED /'
+      - run: pip install -r requirements.txt -r requirements-test.txt -c constraints.txt
       - name: full backend suite (nothing may be skipped here)
+        shell: bash
         run: |
+          set -o pipefail
           python -m pytest -o addopts="" -q -rs tests | tee "$RUNNER_TEMP/pytest.txt"
           if grep -q "skipped" "$RUNNER_TEMP/pytest.txt"; then echo "::error::tests were skipped"; exit 1; fi
 
@@ -92,9 +94,75 @@ jobs:
           python-version: "3.12"
       - name: audit python dependencies
         run: |
-          pip install -r backend/requirements.txt -r backend/requirements-test.txt pip-audit
-          pip-audit
+          pip install -r backend/requirements.txt -r backend/requirements-test.txt -c backend/constraints.txt pip-audit
+          pip-audit --skip-editable
       - name: scan history for secrets
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz gitleaks
           ./gitleaks detect --source . --redact --verbose
+
+  frontend:
+    name: frontend lint, typecheck, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: install (lockfile when present)
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: frontend/package-lock.json
+      - run: npm ls --depth=0
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: frontend/out
+
+  e2e:
+    name: playwright against the real api
+    needs: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-out
+          path: frontend/out
+      - run: pip install -r backend/requirements.txt -c backend/constraints.txt
+      - name: install playwright
+        working-directory: frontend
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+          npx playwright install --with-deps chromium
+      - name: run browser workflows (desktop and mobile)
+        working-directory: frontend
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-results
+          path: |
+            frontend/test-results
+            frontend/playwright-report
