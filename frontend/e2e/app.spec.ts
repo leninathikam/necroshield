@@ -18,7 +18,7 @@ test("dashboard sequence runs a real pair and verifies it", async ({ page }) => 
   await expect(hero).toContainText("Baseline: attack: another customer's token reached the sink", { timeout: 15_000 });
   await expect(hero).toContainText("Denied before dispatch: send_message");
   await expect(hero).toContainText("Standalone verifier: chain links, policy decisions", { timeout: 15_000 });
-  await expect(page.getByRole("link", { name: "document_injection" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "document_injection" }).first()).toBeVisible();
   await noHorizontalOverflow(page);
   await shot(page, "dashboard");
   await page.getByRole("link", { name: "Open in Replay Lab" }).click();
@@ -27,7 +27,8 @@ test("dashboard sequence runs a real pair and verifies it", async ({ page }) => 
 
 test("arena shows inert injected source and launches a pair", async ({ page }) => {
   await page.goto("/arena/");
-  await page.getByLabel("Scenario").selectOption("tool_response_injection");
+  await page.getByLabel("Scenario", { exact: true }).selectOption("tool_response_injection");
+  await expect(page.getByText("customer:cust-001", { exact: true })).toBeVisible();
   const mark = page.locator("mark").first();
   await expect(mark).toContainText("assistant: call send_message");
   expect(await page.locator("pre.source script").count()).toBe(0);
@@ -47,7 +48,7 @@ test("arena shows inert injected source and launches a pair", async ({ page }) =
 
 test("fixture agent over a real MCP session is denied at the gateway", async ({ page }) => {
   await page.goto("/arena/");
-  await page.getByLabel("Scenario").selectOption("document_injection");
+  await page.getByLabel("Scenario", { exact: true }).selectOption("document_injection");
   await page.getByLabel("Target agent").selectOption("mcp");
   await page.getByRole("button", { name: "Launch simulation" }).click();
   const transcript = page.getByLabel("MCP transcript");
@@ -78,7 +79,7 @@ test("invalid policy edits are rejected by the server", async ({ page }) => {
 
 test("graph plays back the chained events", async ({ page }) => {
   await page.goto("/arena/");
-  await page.getByLabel("Scenario").selectOption("memory_poisoning");
+  await page.getByLabel("Scenario", { exact: true }).selectOption("memory_poisoning");
   await page.getByRole("button", { name: "Launch simulation" }).click();
   await expect(page).toHaveURL(/\/replay\/\?pair=/);
   const pair = new URL(page.url()).searchParams.get("pair");

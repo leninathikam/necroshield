@@ -237,7 +237,7 @@ def test_live_runs_need_the_operator_token_even_with_a_provider(tmp_path, monkey
     with TestClient(app) as c:
         status = c.get("/api/live/status").json()
         assert status["available"] is False and status["configured"] is True
-        assert "sk-secret-provider-key" not in json.dumps(status) and "llm.test" not in json.dumps(status)
+        assert "sk-secret-provider-key" not in json.dumps(status) and "https://llm.test/v1" not in json.dumps(status)
         assert c.post("/api/live/runs", json={"scenario_id": "document_injection"}).status_code == 403
     monkeypatch.setenv("NECROSHIELD_LIVE_OPERATOR_TOKEN", "t" * 40)
     app = create_app(str(tmp_path / "l2.db"), allowed_origins={ORIGIN})

@@ -18,12 +18,16 @@ test("judge journey: attack, deny, complete, graph, MCP, benchmark, verify", asy
   mark("1 open dashboard");
 
   await page.getByRole("link", { name: "Attack Arena" }).click();
-  await page.getByLabel("Scenario").selectOption("tool_response_injection");
+  await expect(page.getByRole("heading", { name: "Attack Arena" })).toBeVisible();
+  await page.getByLabel("Scenario", { exact: true }).selectOption("tool_response_injection");
+  // The injection lives in the customer record returned by the tool, not in the document.
+  await expect(page.getByText("customer:cust-001", { exact: true })).toBeVisible();
   await expect(page.locator("mark").first()).toContainText("collector@sink.invalid");
   mark("2 select malicious tool-response scenario");
 
   await page.getByRole("button", { name: "Launch simulation" }).click();
   await expect(page).toHaveURL(/\/replay\/\?pair=/);
+  await expect(page.getByText(/tool_response_injection@2\.0\.0/)).toBeVisible();
   mark("3 start baseline and protected runs");
 
   const baseline = page.locator(".is-baseline");
@@ -45,13 +49,15 @@ test("judge journey: attack, deny, complete, graph, MCP, benchmark, verify", asy
   mark("6 confirm the legitimate task completed");
 
   await page.getByRole("link", { name: "Open the execution graph" }).click();
+  await expect(page.getByRole("heading", { name: "Execution Graph" })).toBeVisible();
   await page.getByRole("button", { name: "protected", exact: true }).click();
   await expect(page.getByText("No attack effect")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/denied ×1/)).toBeVisible();
   mark("7 open the execution graph");
 
   await page.getByRole("link", { name: "Attack Arena" }).click();
-  await page.getByLabel("Scenario").selectOption("tool_response_injection");
+  await expect(page.getByRole("heading", { name: "Attack Arena" })).toBeVisible();
+  await page.getByLabel("Scenario", { exact: true }).selectOption("tool_response_injection");
   await page.getByLabel("Target agent").selectOption("mcp");
   await page.getByRole("button", { name: "Launch simulation" }).click();
   const transcript = page.getByLabel("MCP transcript");
@@ -60,6 +66,7 @@ test("judge journey: attack, deny, complete, graph, MCP, benchmark, verify", asy
   mark("8 run the real MCP sandbox path");
 
   await page.getByRole("link", { name: "Benchmark Studio" }).click();
+  await expect(page.getByRole("heading", { name: "Benchmark Studio" })).toBeVisible();
   await page.getByRole("button", { name: "Run benchmark" }).click();
   await expect(page.getByText("0 / 6")).toBeVisible({ timeout: 20_000 });
   mark("9 run the benchmark");
@@ -71,6 +78,7 @@ test("judge journey: attack, deny, complete, graph, MCP, benchmark, verify", asy
   ]);
   const file = await download.path();
   await page.getByRole("link", { name: "Evidence Explorer" }).click();
+  await expect(page.getByRole("heading", { name: "Evidence Explorer" })).toBeVisible();
   await page.getByLabel("Evidence file").setInputFiles(file);
   await expect(page.locator(".chip-verified", { hasText: /^verified$/ })).toBeVisible();
   const exported = JSON.parse(readFileSync(file, "utf-8"));
