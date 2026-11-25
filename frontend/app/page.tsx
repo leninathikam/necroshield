@@ -56,7 +56,7 @@ export default function Dashboard() {
               <span className="stat-value">{b.summary ? percent(b.summary.attack_success.baseline.value) : "n/a"}</span>
               <span className="stat-sub">
                 {b.summary
-                  ? `${b.summary.attack_success.baseline.numerator}/${b.summary.attack_success.baseline.denominator} attack scenarios, latest verified runs`
+                  ? `${b.summary.attack_success.baseline.numerator}/${b.summary.attack_success.baseline.denominator} attack scenarios run so far (latest verified)`
                   : "Run the benchmark to measure"}
               </span>
             </div>
@@ -69,7 +69,11 @@ export default function Dashboard() {
               <span className="stat-value">{b.summary ? percent(b.summary.attack_success.protected.value) : "n/a"}</span>
               <span className="stat-sub">
                 {b.summary
-                  ? `task completion ${percent(b.summary.task_completion.protected.value)} · false positives ${b.summary.false_positives.numerator}/${b.summary.false_positives.denominator}`
+                  ? `task completion ${percent(b.summary.task_completion.protected.value)} · false positives ${
+                      b.summary.false_positives.denominator === 0
+                        ? "n/a (control not run yet)"
+                        : `${b.summary.false_positives.numerator}/${b.summary.false_positives.denominator}`
+                    }`
                   : "No verified benchmark yet"}
               </span>
             </div>

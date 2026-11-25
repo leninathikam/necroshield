@@ -76,3 +76,49 @@ def test_cli_refuses_to_overwrite_evidence_and_records_nothing(tmp_path, capsys)
     assert store.count() == 0
     store.close()
     assert "refusing to overwrite" in capsys.readouterr().err
+
+
+def test_retention_prunes_oldest_but_keeps_the_benchmark_population(tmp_path):
+    from necroshield.catalog import BENIGN_INVOICE, DOCUMENT_INJECTION
+    from necroshield.runner import run_pair
+    from necroshield.scenarios import Grant, Policy
+
+    custom = Policy("custom/1.0.0", DOCUMENT_INJECTION.policy.grants + (
+        Grant("g-any-send", "send_message", {"to": None, "attach": None}),))
+    store = RunStore(tmp_path / "runs.db", max_pairs=10)
+    benchmark = [run_pair(DOCUMENT_INJECTION), run_pair(BENIGN_INVOICE)]
+    for p in benchmark:
+        store.save(p)
+    for _ in range(25):
+        store.save(run_pair(DOCUMENT_INJECTION, custom))
+    assert store.count() <= 10
+    current = {s.scenario_id: (s.digest(), s.policy.digest()) for s in (DOCUMENT_INJECTION, BENIGN_INVOICE)}
+    kept = {p.export["pair_id"] for p in store.latest_default_per_scenario(current)}
+    assert kept == {p.pair_id for p in benchmark}
+    assert all(p.verified for p in store.recent(50))
+    store.close()
+
+
+def test_reset_removes_everything_and_store_stays_usable(pair, tmp_path):
+    store = RunStore(tmp_path / "runs.db")
+    store.save(pair)
+    assert store.reset() == 1 and store.count() == 0
+    from necroshield.catalog import DOCUMENT_INJECTION
+    from necroshield.runner import run_pair
+    store.save(run_pair(DOCUMENT_INJECTION))
+    assert store.count() == 1
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        store._db.execute("DELETE FROM pairs")  # the maintenance window closed again
+    store.close()
+
+
+def test_store_upgrades_a_database_with_the_old_delete_triggers(pair, tmp_path):
+    db = tmp_path / "old.db"
+    store = RunStore(db)
+    store.save(pair)
+    store._db.execute("CREATE TRIGGER pairs_no_delete BEFORE DELETE ON pairs BEGIN SELECT RAISE(ABORT, 'old'); END")
+    store._db.commit()
+    store.close()
+    reopened = RunStore(db)
+    assert reopened.reset() == 1
+    reopened.close()

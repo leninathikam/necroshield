@@ -8,12 +8,14 @@ MCP replay transcripts and live runs are labeled with their own, weaker evidence
 from __future__ import annotations
 
 import asyncio
+import hmac
+import logging
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -32,6 +34,24 @@ from .guards import Guards, RateLimiter
 from .schemas import LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest
 
 MAX_BODY = 256 * 1024
+MIN_OPERATOR_TOKEN = 32
+log = logging.getLogger("necroshield")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def _origins_from_env() -> set[str]:
+    origins = {o.strip().rstrip("/") for o in os.environ.get(
+        "NECROSHIELD_ALLOWED_ORIGINS", "http://localhost:8017,http://localhost:3017").split(",") if o.strip()}
+    external = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")  # set by Render for web services
+    if external:
+        origins.add(external)
+    return origins
 
 
 def _scenario(scenario_id: str) -> Scenario:
@@ -99,20 +119,34 @@ def _scenario_view(s: Scenario) -> dict[str, Any]:
 def create_app(db_path: str | None = None, static_dir: str | None = None,
                allowed_origins: set[str] | None = None) -> FastAPI:
     db_path = db_path or os.environ.get("NECROSHIELD_DB", "necroshield.db")
-    origins = allowed_origins if allowed_origins is not None else {
-        o.strip() for o in os.environ.get("NECROSHIELD_ALLOWED_ORIGINS", "http://localhost:8017,http://localhost:3017").split(",")
-        if o.strip()}
-    store = RunStore(db_path, max_pairs=int(os.environ.get("NECROSHIELD_MAX_PAIRS", "20000")))
+    origins = allowed_origins if allowed_origins is not None else _origins_from_env()
+    store = RunStore(db_path, max_pairs=_env_int("NECROSHIELD_MAX_PAIRS", 5000))
     # Swagger UI loads assets from a CDN, which the CSP forbids; the OpenAPI document stays available.
     app = FastAPI(title="NecroShield", version="0.2.0", docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
     app.state.store = store
-    app.add_middleware(Guards, allowed_origins=origins, max_body=MAX_BODY,
-                       limiter=RateLimiter({"write": int(os.environ.get("NECROSHIELD_WRITE_LIMIT", "60")),
-                                            "live": int(os.environ.get("NECROSHIELD_LIVE_LIMIT", "3")),
-                                            "read": int(os.environ.get("NECROSHIELD_READ_LIMIT", "600"))}))
+    app.add_middleware(
+        Guards, allowed_origins=origins, max_body=MAX_BODY,
+        proxy_hops=_env_int("NECROSHIELD_PROXY_HOPS", 0),
+        client_ip_header=os.environ.get("NECROSHIELD_CLIENT_IP_HEADER") or None,
+        limiter=RateLimiter({
+            "write": _env_int("NECROSHIELD_WRITE_LIMIT", 60),
+            "benchmark": _env_int("NECROSHIELD_BENCHMARK_LIMIT", 6),
+            "global_write": _env_int("NECROSHIELD_GLOBAL_WRITE_LIMIT", 600),
+            "live": _env_int("NECROSHIELD_LIVE_LIMIT", 3),
+            "read": _env_int("NECROSHIELD_READ_LIMIT", 600),
+        }))
+
+    @app.exception_handler(RecursionError)
+    async def too_deep(_request: Request, _exc: RecursionError) -> JSONResponse:
+        return JSONResponse({"detail": "document is nested too deeply"}, status_code=400)
     scenario_views = [_scenario_view(s) for s in REGISTRY.values()]  # immutable definitions: build once
-    live_budget = {"remaining": int(os.environ.get("NECROSHIELD_LIVE_MAX_RUNS", "30"))}
+    live_budget = {"remaining": _env_int("NECROSHIELD_LIVE_MAX_RUNS", 30)}
     live_lock = threading.Lock()
+    operator_token = os.environ.get("NECROSHIELD_LIVE_OPERATOR_TOKEN", "")
+    if operator_token and len(operator_token) < MIN_OPERATOR_TOKEN:
+        log.warning("NECROSHIELD_LIVE_OPERATOR_TOKEN is shorter than %d characters; live runs stay disabled",
+                    MIN_OPERATOR_TOKEN)
+        operator_token = ""
 
     def _save(pair: Any) -> None:
         try:
@@ -122,7 +156,14 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "scenarios": len(REGISTRY), "stored_pairs": store.count()}
+        return {"status": "ok", "scenarios": len(REGISTRY), "stored_pairs": store.count(), "max_pairs": store.max_pairs}
+
+    @app.get("/api/client-key")
+    def client_key(request: Request) -> dict[str, str]:
+        """A hash of the key this request was rate limited under. Lets an operator confirm, after
+        deploying behind a proxy, that different clients get different keys and that sending a
+        forged X-Forwarded-For does not change yours."""
+        return {"client_key_hash": getattr(request.state, "client_key_hash", "")}
 
     @app.get("/api/tools")
     def tools() -> list[dict[str, Any]]:
@@ -149,7 +190,7 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
         return _detail(store.load(pair.pair_id))
 
     @app.get("/api/runs")
-    def list_runs(limit: int = Query(25, ge=1, le=200)) -> list[dict[str, Any]]:
+    def list_runs(limit: int = Query(25, ge=1, le=100)) -> list[dict[str, Any]]:
         return [_summary(p) for p in store.recent(limit)]
 
     @app.get("/api/runs/{pair_id}")
@@ -218,16 +259,24 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.get("/api/live/status")
     def live_status() -> dict[str, Any]:
+        """`available` means a visitor's browser can start a live run, which is never the case:
+        paid inference is operator-only (CLI, or the API with the operator token)."""
         try:
             config = ProviderConfig.from_env()
         except ValueError as exc:
-            return {"available": False, "reason": str(exc)}
+            return {"available": False, "configured": False, "reason": str(exc)}
         if config is None:
-            return {"available": False, "reason": "no model provider is configured on this server"}
-        return {"available": True, **config.describe()}
+            return {"available": False, "configured": False, "reason": "no model provider is configured on this server"}
+        return {"available": False, "configured": True, "operator_api_enabled": bool(operator_token),
+                "reason": "live model runs are operator-only on this server", **config.describe()}
 
     @app.post("/api/live/runs")
-    async def live_runs(request: LiveRunRequest) -> dict[str, Any]:
+    async def live_runs(request: LiveRunRequest, authorization: str = Header(default="")) -> dict[str, Any]:
+        if not operator_token:
+            raise HTTPException(403, "live runs are disabled on this server (no operator token configured)")
+        supplied = authorization.removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(supplied.encode(), operator_token.encode()):
+            raise HTTPException(401, "live runs require the operator token")
         try:
             config = ProviderConfig.from_env()
         except ValueError as exc:
@@ -249,6 +298,13 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
             run["verification"] = verify_export(run)
         return {"evaluation_mode": "live_agent_evaluation", "repetitions": request.repetitions, "runs": runs,
                 "note": "each run is a separate model execution; runs are not paired or merged into fixture metrics"}
+
+    if os.environ.get("NECROSHIELD_SEED_ON_START") == "1":
+        # Judges should never land on an empty benchmark, including after a restart on ephemeral disk.
+        if _benchmark()["missing_scenarios"]:
+            for scenario_obj in REGISTRY.values():
+                _save(run_pair(scenario_obj))
+            log.info("seeded the benchmark with one verified pair per scenario")
 
     static = Path(static_dir or os.environ.get("NECROSHIELD_STATIC", "")) if (static_dir or os.environ.get("NECROSHIELD_STATIC")) else None
     if static and static.is_dir():

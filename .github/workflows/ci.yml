@@ -171,7 +171,7 @@ jobs:
             frontend/playwright-report
 
   container:
-    name: container build and smoke test
+    name: container under production conditions
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -179,15 +179,28 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build -t necroshield:ci .
-      - name: run the image and exercise the judge path
+      - name: start like Render (assigned PORT, root-owned disk, proxy hop, no origin config)
         run: |
-          docker run -d --name ns -p 8017:8017 -e NECROSHIELD_ALLOWED_ORIGINS=http://127.0.0.1:8017 necroshield:ci
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8017/api/health && break; sleep 1; done
-          curl -sf http://127.0.0.1:8017/ | grep -q "NecroShield"
-          curl -sf http://127.0.0.1:8017/arena/ | grep -q "Attack Arena"
-          run=$(curl -sf -X POST -H 'content-type: application/json' -H 'origin: http://127.0.0.1:8017' \
-                 -d '{"scenario_id":"document_injection"}' http://127.0.0.1:8017/api/runs)
-          echo "$run" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['verification']['verified']; assert d['summary']['baseline']['attack_succeeded']; assert not d['summary']['protected']['attack_succeeded']; assert d['summary']['protected']['task_completed']; print('container judge path OK', d['summary']['pair_id'])"
-          docker exec ns id -u | grep -qx 10001
+          sudo mkdir -p /srv/ns-data && sudo chown root:root /srv/ns-data && sudo chmod 755 /srv/ns-data
+          docker run -d --name ns -p 10000:10000 -e PORT=10000 -e NECROSHIELD_PROXY_HOPS=1 \
+            -e NECROSHIELD_SEED_ON_START=1 -e NECROSHIELD_WRITE_LIMIT=5 -v /srv/ns-data:/data necroshield:ci
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:10000/api/health && break; sleep 1; done
+      - name: judge path, same-origin writes, isolation, limits
+        run: python3 .github/scripts/container_smoke.py http://127.0.0.1:10000
+      - name: service runs as uid 10001 and the disk file belongs to it
+        run: |
+          docker exec ns cat /proc/1/status | grep -E "^Uid:\s+10001\s"
+          sudo stat -c '%u %n' /srv/ns-data/necroshield.db | grep -q '^10001 '
+      - name: history persists across a restart
+        run: |
+          before=$(curl -sf http://127.0.0.1:10000/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")
+          docker restart ns
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:10000/api/health >/dev/null && break; sleep 1; done
+          after=$(curl -sf http://127.0.0.1:10000/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")
+          echo "stored pairs before=$before after=$after"; test "$before" -gt 0 && test "$before" = "$after"
+      - name: demo reset inside the container
+        run: |
+          docker exec ns python -m necroshield reset-store --db /data/necroshield.db --yes
+          test "$(curl -sf http://127.0.0.1:10000/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")" = 0
       - if: always()
         run: docker logs ns || true

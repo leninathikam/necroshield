@@ -132,7 +132,7 @@ def test_live_track_reports_unavailable_without_provider(client, monkeypatch):
     for key in ("NECROSHIELD_LLM_BASE_URL", "NECROSHIELD_LLM_API_KEY", "NECROSHIELD_LLM_MODEL"):
         monkeypatch.delenv(key, raising=False)
     assert client.get("/api/live/status").json()["available"] is False
-    assert client.post("/api/live/runs", json={"scenario_id": "document_injection"}).status_code == 503
+    assert client.post("/api/live/runs", json={"scenario_id": "document_injection"}).status_code == 403
 
 
 def test_streamed_oversized_bodies_are_rejected(client):
@@ -170,3 +170,96 @@ def test_bundle_upload_is_checked_against_current_definitions(client):
 def test_pins_endpoint_matches_catalog(client):
     pins = client.get("/api/pins").json()
     assert pins["document_injection"]["scenario_digest"] == REGISTRY["document_injection"].digest()
+
+
+
+def test_same_origin_writes_work_without_any_origin_configuration(tmp_path):
+    app = create_app(str(tmp_path / "so.db"), allowed_origins=set())
+    with TestClient(app, base_url="https://necroshield.example") as c:
+        ok = c.post("/api/runs", json={"scenario_id": "benign_invoice"},
+                    headers={"origin": "https://necroshield.example"})
+        bad = c.post("/api/runs", json={"scenario_id": "benign_invoice"},
+                     headers={"origin": "https://necroshield.example.evil.test"})
+    assert ok.status_code == 201 and bad.status_code == 403
+
+
+def test_render_external_url_is_an_allowed_origin(tmp_path, monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://necroshield.onrender.com")
+    app = create_app(str(tmp_path / "r.db"))
+    with TestClient(app) as c:
+        response = c.post("/api/verify", json={}, headers={"origin": "https://necroshield.onrender.com"})
+    assert response.status_code == 200
+
+
+def test_proxy_hop_client_keys_cannot_be_forged(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_PROXY_HOPS", "1")
+    monkeypatch.setenv("NECROSHIELD_WRITE_LIMIT", "2")
+    app = create_app(str(tmp_path / "p.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        key = lambda xff: c.get("/api/client-key", headers={"x-forwarded-for": xff}).json()["client_key_hash"]
+        assert key("203.0.113.1") == key("1.1.1.1, 203.0.113.1") != key("203.0.113.2")
+        codes = [c.post("/api/verify", json={}, headers={"x-forwarded-for": f"{i}.0.0.1, 203.0.113.9"}).status_code
+                 for i in range(3)]
+        assert codes == [200, 200, 429]
+        assert c.post("/api/verify", json={}, headers={"x-forwarded-for": "203.0.113.10"}).status_code == 200
+
+
+def test_benchmark_runs_have_their_own_tighter_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_BENCHMARK_LIMIT", "1")
+    app = create_app(str(tmp_path / "b.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        assert [c.post("/api/benchmark").status_code for _ in range(2)] == [201, 429]
+        assert c.post("/api/runs", json={"scenario_id": "benign_invoice"}).status_code == 201
+
+
+def test_global_write_limit_bounds_total_load(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_PROXY_HOPS", "1")
+    monkeypatch.setenv("NECROSHIELD_GLOBAL_WRITE_LIMIT", "3")
+    app = create_app(str(tmp_path / "g.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        codes = [c.post("/api/verify", json={}, headers={"x-forwarded-for": f"198.51.100.{i}"}).status_code for i in range(4)]
+    assert codes == [200, 200, 200, 429]
+
+
+def test_deeply_nested_json_is_a_client_error(client):
+    body = b"[" * 100000 + b"]" * 100000
+    response = client.post("/api/verify", content=body, headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert client.get("/api/health").status_code == 200
+
+
+def test_live_runs_need_the_operator_token_even_with_a_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_LLM_BASE_URL", "https://llm.test/v1")
+    monkeypatch.setenv("NECROSHIELD_LLM_API_KEY", "sk-secret-provider-key")
+    monkeypatch.setenv("NECROSHIELD_LLM_MODEL", "m")
+    monkeypatch.setenv("NECROSHIELD_LLM_ALLOWED_HOSTS", "llm.test")
+    app = create_app(str(tmp_path / "l.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        status = c.get("/api/live/status").json()
+        assert status["available"] is False and status["configured"] is True
+        assert "sk-secret-provider-key" not in json.dumps(status) and "llm.test" not in json.dumps(status)
+        assert c.post("/api/live/runs", json={"scenario_id": "document_injection"}).status_code == 403
+    monkeypatch.setenv("NECROSHIELD_LIVE_OPERATOR_TOKEN", "t" * 40)
+    app = create_app(str(tmp_path / "l2.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        wrong = c.post("/api/live/runs", json={"scenario_id": "document_injection"},
+                       headers={"authorization": "Bearer " + "x" * 40})
+        assert wrong.status_code == 401
+
+
+def test_short_operator_tokens_leave_live_runs_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_LIVE_OPERATOR_TOKEN", "short")
+    app = create_app(str(tmp_path / "s.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        r = c.post("/api/live/runs", json={"scenario_id": "document_injection"}, headers={"authorization": "Bearer short"})
+    assert r.status_code == 403
+
+
+def test_seed_on_start_fills_the_benchmark_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_SEED_ON_START", "1")
+    db = str(tmp_path / "seed.db")
+    with TestClient(create_app(db, allowed_origins={ORIGIN})) as c:
+        assert c.get("/api/benchmark").json()["missing_scenarios"] == []
+        first = c.get("/api/health").json()["stored_pairs"]
+    with TestClient(create_app(db, allowed_origins={ORIGIN})) as c:
+        assert c.get("/api/health").json()["stored_pairs"] == first == 7

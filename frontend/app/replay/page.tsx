@@ -26,6 +26,7 @@ export default function ReplayPage() {
               Download evidence (JSON)
             </a>
             <Link className="btn" href={`/policy/?scenario=${d.export.scenario.id}`}>Modify the policy and re-run</Link>
+            <Link className="btn" href={`/graph/?pair=${d.summary.pair_id}`}>Open the execution graph</Link>
             <Link className="btn" href={`/evidence/?pair=${d.summary.pair_id}`}>Inspect the event chain</Link>
           </div>
         </>

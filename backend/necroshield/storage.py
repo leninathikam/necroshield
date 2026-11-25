@@ -1,9 +1,14 @@
 """Durable run history in SQLite (stdlib).
 
-Triggers block UPDATE, DELETE, and INSERT OR REPLACE through this connection. That guards
-against accidental rewrites only: anyone with write access to the file can drop the triggers.
-Every read re-verifies the stored export with the standalone verifier, and callers receive the
-verification problems alongside the data, so nothing is shown as a conclusion unverified.
+Triggers block UPDATE always, and DELETE (including INSERT OR REPLACE) unless the store's own
+retention or reset path has opened a maintenance window inside the same transaction. Records
+can be removed but never rewritten. This guards against accidents only: anyone with write
+access to the file can drop the triggers. Every read re-verifies the stored export with the
+standalone verifier, so nothing is shown as a conclusion unverified.
+
+Retention: once the store holds `max_pairs`, the oldest pairs are pruned down to 90% of the
+cap. The newest default-policy pair of each scenario definition (the benchmark population) is
+never pruned.
 """
 
 from __future__ import annotations
@@ -35,6 +40,11 @@ CREATE TABLE IF NOT EXISTS pairs (
 );
 CREATE INDEX IF NOT EXISTS pairs_by_created ON pairs (created_at);
 CREATE INDEX IF NOT EXISTS pairs_by_scenario ON pairs (scenario_id, policy_source, created_at);
+CREATE TABLE IF NOT EXISTS maintenance (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    deletes_allowed INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO maintenance VALUES (1, 0);
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     pair_id TEXT NOT NULL REFERENCES pairs(pair_id),
@@ -74,11 +84,14 @@ class RunStore:
         self._db.execute("PRAGMA recursive_triggers = ON")
         self._db.executescript(SCHEMA)
         for table in _IMMUTABLE:
-            for op in ("UPDATE", "DELETE"):
-                self._db.execute(
-                    f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
-                    f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"
-                )
+            self._db.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
+                f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
+            self._db.execute(f"DROP TRIGGER IF EXISTS {table}_no_delete")  # pre-retention schema
+            self._db.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {table}_guard_delete BEFORE DELETE ON {table} "
+                f"WHEN (SELECT deletes_allowed FROM maintenance WHERE id = 1) = 0 "
+                f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
         self._db.commit()
 
     def close(self) -> None:
@@ -90,9 +103,10 @@ class RunStore:
         export = pair.export()
         duration = pair.baseline.duration_ms + pair.protected.duration_ms
         with self._lock, self._db:
-            # History is append-only, so growth is bounded by refusing new pairs past the cap.
             if self._db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0] >= self.max_pairs:
-                raise StorageFull(f"evidence store is full ({self.max_pairs} pairs)")
+                self._prune(max(1, int(self.max_pairs * 0.9)) - 1)
+                if self._db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0] >= self.max_pairs:
+                    raise StorageFull(f"evidence store is full ({self.max_pairs} pairs, all protected)")
             self._db.execute(
                 "INSERT INTO pairs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (pair.pair_id, datetime.now(timezone.utc).isoformat(), pair.scenario.scenario_id,
@@ -102,6 +116,45 @@ class RunStore:
             for run in (pair.baseline, pair.protected):
                 self._db.execute("INSERT INTO runs VALUES (?, ?, ?, ?)",
                                  (run.run_id, pair.pair_id, run.mode.value, run.head))
+
+    def _delete(self, pair_ids: list[str]) -> int:
+        """Remove whole pairs inside the caller's transaction. The maintenance flag is opened and
+        closed within that transaction, so a failure rolls it back to closed."""
+        if not pair_ids:
+            return 0
+        self._db.execute("UPDATE maintenance SET deletes_allowed = 1 WHERE id = 1")
+        for start in range(0, len(pair_ids), 500):
+            chunk = pair_ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            self._db.execute(f"DELETE FROM runs WHERE pair_id IN ({marks})", chunk)
+            self._db.execute(f"DELETE FROM pairs WHERE pair_id IN ({marks})", chunk)
+        self._db.execute("UPDATE maintenance SET deletes_allowed = 0 WHERE id = 1")
+        return len(pair_ids)
+
+    def _protected_ids(self) -> set[str]:
+        rows = self._db.execute(
+            "SELECT pair_id FROM pairs p WHERE policy_source = 'scenario_default' AND created_at = ("
+            "SELECT MAX(created_at) FROM pairs q WHERE q.scenario_id = p.scenario_id AND "
+            "q.scenario_digest = p.scenario_digest AND q.policy_digest = p.policy_digest AND "
+            "q.policy_source = 'scenario_default')").fetchall()
+        return {r[0] for r in rows}
+
+    def _prune(self, keep: int) -> int:
+        keep_ids = self._protected_ids()
+        rows = self._db.execute("SELECT pair_id FROM pairs ORDER BY created_at DESC").fetchall()
+        survivors, doomed = 0, []
+        for (pair_id,) in rows:
+            if pair_id in keep_ids or survivors < keep - len(keep_ids):
+                survivors += 1
+            else:
+                doomed.append(pair_id)
+        return self._delete(doomed)
+
+    def reset(self) -> int:
+        """Delete every stored pair (demo reset). Returns the number removed."""
+        with self._lock, self._db:
+            ids = [r[0] for r in self._db.execute("SELECT pair_id FROM pairs").fetchall()]
+            return self._delete(ids)
 
     def _row_to_pair(self, row: tuple) -> StoredPair:
         """Never raises on bad stored data: problems are returned so callers withhold conclusions."""

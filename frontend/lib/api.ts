@@ -1,6 +1,5 @@
 import type {
   Benchmark,
-  LiveResult,
   LiveStatus,
   McpReplay,
   Mode,
@@ -53,8 +52,6 @@ export const api = {
   runBenchmark: () => post<Benchmark>("/api/benchmark", {}),
   mcpReplay: (scenarioId: string, mode: Mode) => post<McpReplay>("/api/mcp/replay", { scenario_id: scenarioId, mode }),
   liveStatus: (signal?: AbortSignal) => request<LiveStatus>("/api/live/status", { signal }),
-  liveRun: (scenarioId: string, mode: Mode, repetitions: number) =>
-    post<LiveResult>("/api/live/runs", { scenario_id: scenarioId, mode, repetitions }),
   tools: (signal?: AbortSignal) => request<ToolSpecView[]>("/api/tools", { signal }),
   exportUrl: (pairId: string) => `/api/runs/${encodeURIComponent(pairId)}/export`,
   bundleUrl: "/api/benchmark/bundle",

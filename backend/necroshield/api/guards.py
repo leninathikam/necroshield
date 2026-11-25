@@ -1,13 +1,23 @@
 """Request guards as plain ASGI middleware: body size limit, origin check for state-changing
-requests, per-client rate limits, and security headers."""
+requests, per-client and global rate limits, and security headers.
+
+Client identity for rate limiting. Behind a reverse proxy the socket peer is the proxy, so every
+visitor would share one bucket. Configure exactly one of:
+  - client_ip_header: a header the proxy overwrites (never trusts from the client), or
+  - proxy_hops: the number of trusted proxies appending to X-Forwarded-For. The key is the entry
+    that many places from the right, which a client cannot forge by sending its own header.
+Without either, the socket peer is used, which is correct when clients connect directly.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
 from collections import defaultdict
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlsplit
 
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -54,9 +64,33 @@ class RateLimiter:
             return True
 
 
+GLOBAL = "*"
+
+
+def same_origin(origin: str, host: str | None) -> bool:
+    """True when a browser Origin names this server. Browsers set Origin themselves, so a
+    cross-site page cannot claim our host; non-browser clients are not stopped by this check."""
+    parts = urlsplit(origin)
+    return parts.scheme in ("http", "https") and bool(host) and parts.netloc.lower() == host.lower()
+
+
 class Guards:
-    def __init__(self, app: ASGIApp, *, allowed_origins: set[str], max_body: int, limiter: RateLimiter) -> None:
+    def __init__(self, app: ASGIApp, *, allowed_origins: set[str], max_body: int, limiter: RateLimiter,
+                 proxy_hops: int = 0, client_ip_header: str | None = None) -> None:
         self.app, self.allowed_origins, self.max_body, self.limiter = app, allowed_origins, max_body, limiter
+        self.proxy_hops = max(0, proxy_hops)
+        self.client_ip_header = client_ip_header.lower() if client_ip_header else None
+
+    def client_key(self, scope: Scope, headers: dict[str, str]) -> str:
+        peer = (scope.get("client") or ("unknown", 0))[0]
+        if self.client_ip_header:
+            value = headers.get(self.client_ip_header, "").strip()
+            return value[:64] or peer
+        if self.proxy_hops:
+            hops = [h.strip() for h in headers.get("x-forwarded-for", "").split(",") if h.strip()]
+            if len(hops) >= self.proxy_hops:
+                return hops[-self.proxy_hops][:64]
+        return peer
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -65,19 +99,26 @@ class Guards:
         headers = {k.decode().lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         method, path = scope["method"], scope["path"]
 
-        client = (scope.get("client") or ("unknown", 0))[0]
+        client = self.client_key(scope, headers)
+        scope.setdefault("state", {})["client_key_hash"] = hashlib.sha256(client.encode()).hexdigest()[:12]
+        buckets: list[tuple[str, str]] = []
         if method in UNSAFE_METHODS:
             # The origin check stops cross-site browser writes; it does not authenticate anyone.
             origin = headers.get("origin")
-            if origin is not None and origin not in self.allowed_origins:
+            if origin is not None and origin not in self.allowed_origins and not same_origin(origin, headers.get("host")):
                 await _reject(send, 403, "origin not allowed")
                 return
-            bucket = "live" if path.startswith("/api/live") else "write"
-        else:
-            bucket = "read" if path.startswith("/api/") else ""
-        if bucket and not self.limiter.allow(client, bucket):
-            await _reject(send, 429, "rate limit exceeded")
-            return
+            if path.startswith("/api/live"):
+                buckets.append((client, "live"))
+            elif path == "/api/benchmark":
+                buckets.append((client, "benchmark"))
+            buckets += [(client, "write"), (GLOBAL, "global_write")]
+        elif path.startswith("/api/"):
+            buckets.append((client, "read"))
+        for key, bucket in buckets:
+            if bucket in self.limiter.limits and not self.limiter.allow(key, bucket):
+                await _reject(send, 429, "rate limit exceeded" if key != GLOBAL else "server is busy; try again shortly")
+                return
         declared = headers.get("content-length")
         if declared is not None and (not declared.isdigit() or int(declared) > self.max_body):
             await _reject(send, 413, "request body too large")

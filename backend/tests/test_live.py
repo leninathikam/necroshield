@@ -67,7 +67,7 @@ def test_provider_failure_is_recorded_not_raised():
         return httpx.Response(500)
     result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True,
                       client=httpx.Client(transport=httpx.MockTransport(handler)))
-    assert result["outcome"]["failure"] == "provider error: HTTPStatusError"
+    assert result["outcome"]["failure"] == "provider error: HTTP 500"
     assert verify_export(result) == []
 
 
@@ -133,3 +133,108 @@ def test_live_cost_tampering_is_detected():
     result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True, client=_client(SCRIPT, []))
     result["cost_usd"] = 0.0
     assert any("cost" in p for p in verify_export(result))
+
+
+OPENROUTER = ProviderConfig("https://openrouter.ai/api/v1", "sk-or-test-key-123", "openai/gpt-4o-mini",
+                            "openrouter", 0.15, 0.60)
+
+
+def _openrouter_response(calls, cost=0.0000425, finish="tool_calls"):
+    """Response shape documented for OpenRouter chat completions with usage accounting."""
+    return {"id": "gen-1", "object": "chat.completion", "model": "openai/gpt-4o-mini",
+            "choices": [{"index": 0, "finish_reason": finish if calls else "stop",
+                         "message": {"role": "assistant", "content": None if calls else "Done.",
+                                     **({"tool_calls": calls} if calls else {})}}],
+            "usage": {"prompt_tokens": 210, "completion_tokens": 18, "total_tokens": 228, "cost": cost}}
+
+
+def test_request_and_response_follow_the_openrouter_protocol():
+    seen, script = [], [SCRIPT[0], SCRIPT[1], SCRIPT[2], None]
+
+    def handler(request):
+        seen.append({"url": str(request.url), "auth": request.headers.get("authorization"),
+                     "body": json.loads(request.content)})
+        return httpx.Response(200, json=_openrouter_response(script.pop(0)))
+
+    result = run_live(DOCUMENT_INJECTION, OPENROUTER, protected=True,
+                      client=httpx.Client(transport=httpx.MockTransport(handler)))
+    first = seen[0]
+    assert first["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert first["auth"] == "Bearer sk-or-test-key-123"
+    body = first["body"]
+    assert body["model"] == "openai/gpt-4o-mini" and body["max_tokens"] == 512 and body["usage"] == {"include": True}
+    assert body["tools"][0]["type"] == "function" and "parameters" in body["tools"][0]["function"]
+    for request in seen:
+        for message in request["body"]["messages"]:
+            assert message.get("tool_calls", "absent") is not None  # never "tool_calls": null
+            if message["role"] == "tool":
+                assert message["tool_call_id"] and isinstance(message["content"], str)
+    assert result["provider_reported_cost_usd"] == round(4 * 0.0000425, 8)
+    assert result["usage"] == {"prompt_tokens": 840, "completion_tokens": 72}
+    assert verify_export(result) == []
+    assert "sk-or-test-key-123" not in json.dumps(result)
+
+
+def test_non_openrouter_requests_omit_the_usage_extension():
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+
+    run_live(DOCUMENT_INJECTION, CONFIG, protected=True, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert "usage" not in seen[0]
+
+
+def test_refusal_is_recorded_as_a_failure_without_dispatch():
+    def handler(request):
+        message = {"role": "assistant", "content": None, "refusal": "I can't help with that."}
+        return httpx.Response(200, json={"choices": [{"message": message, "finish_reason": "stop"}]})
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    turn = next(e for e in result["events"] if e["kind"] == "model_turn")
+    assert turn["data"]["refusal"] == "I can't help with that."
+    assert result["outcome"]["failure"] == "model refused" and verify_export(result) == []
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (httpx.ReadTimeout("slow"), "provider error: ReadTimeout"),
+    (httpx.ConnectError("down"), "provider error: ConnectError"),
+])
+def test_timeouts_and_connection_errors_end_the_run_with_evidence(exc, expected):
+    def handler(request):
+        raise exc
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert result["outcome"]["failure"] == expected and verify_export(result) == []
+
+
+def test_rate_limited_provider_is_reported_with_status():
+    result = run_live(DOCUMENT_INJECTION, CONFIG, protected=True,
+                      client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429))))
+    assert result["outcome"]["failure"] == "provider error: HTTP 429"
+
+
+def test_provider_cost_tampering_is_detected():
+    script = [None]
+    def handler(request):
+        return httpx.Response(200, json=_openrouter_response(script.pop(0)))
+    result = run_live(DOCUMENT_INJECTION, OPENROUTER, protected=True, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result["provider_reported_cost_usd"] = 0.0
+    assert any("provider-reported cost" in p for p in verify_export(result))
+
+
+def test_budget_ledger_refuses_runs_that_could_exceed_two_dollars(tmp_path):
+    from necroshield.budget import BudgetExceeded, Ledger
+    from necroshield.live import worst_case_run_cost
+
+    worst = worst_case_run_cost(0.15, 0.60)
+    assert worst < 0.02  # gpt-4o-mini list prices: a $2 cap allows 100+ worst-case runs
+    ledger = Ledger(tmp_path / "ledger.json", budget_usd=2.0)
+    assert ledger.reserve(OPENROUTER) == worst
+    ledger.record({"run_id": "r1", "scenario": {"id": "x"}, "provider": {"model": "m"},
+                   "provider_reported_cost_usd": 1.995, "cost_usd": 1.0})
+    assert ledger.spent == 1.995  # provider-reported cost wins over the estimate
+    with pytest.raises(BudgetExceeded):
+        ledger.reserve(OPENROUTER)
+    unpriced = ProviderConfig("https://llm.test/v1", "k", "m", "p", None, None)
+    with pytest.raises(BudgetExceeded):
+        Ledger(tmp_path / "other.json", 2.0).reserve(unpriced)

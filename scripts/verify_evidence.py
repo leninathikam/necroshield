@@ -489,6 +489,11 @@ def verify_live(run: Any, pins: dict | None = None) -> list[str]:
                          if price_in and price_out else None)
         if run["cost_usd"] != expected_cost:
             problems.append("live cost does not follow from chained usage and prices")
+        chained_reported = completed.get("provider_reported_cost_usd", "")
+        reported = run.get("provider_reported_cost_usd")
+        if (reported is None) != (chained_reported == "") or (
+                reported is not None and f"{float(reported):.8f}" != chained_reported):
+            problems.append("live provider-reported cost does not match the chained run_completed")
         for event in events:
             if event["kind"] != "tool_call":
                 continue

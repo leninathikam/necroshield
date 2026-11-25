@@ -87,7 +87,7 @@ export default function BenchmarkPage() {
                           <td><OutcomeChips outcome={r.protected} /></td>
                           <td className="mono">{r.denied_calls ?? "n/a"}</td>
                           <td><VerifiedChip verified={r.verified} /></td>
-                          <td><Link href={`/replay/?pair=${r.pair_id}`}>open pair</Link></td>
+                          <td style={{ whiteSpace: "nowrap" }}><Link href={`/replay/?pair=${r.pair_id}`}>open pair</Link></td>
                         </tr>
                       ))}
                     </tbody>

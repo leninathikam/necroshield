@@ -174,27 +174,9 @@ export interface ToolSpecView {
   optional: string[];
 }
 
-export interface LiveRun {
-  run_id: string;
-  provider: { provider: string; model: string; pricing_configured: boolean };
-  temperature: number;
-  usage: { prompt_tokens: number; completion_tokens: number };
-  cost_usd: number | null;
-  latency_ms: number;
-  outcome: Outcome & { failure: string | null };
-  events: { seq: number; kind: string; data: Record<string, unknown> }[];
-  verification: string[];
-}
-
-export interface LiveResult {
-  evaluation_mode: string;
-  repetitions: number;
-  runs: LiveRun[];
-  note: string;
-}
-
 export interface LiveStatus {
   available: boolean;
+  configured?: boolean;
   reason?: string;
   provider?: string;
   model?: string;

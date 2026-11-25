@@ -32,8 +32,15 @@ LIVE_FORMAT = "necroshield.live/1"
 EVALUATION_MODE = "live_agent_evaluation"
 MAX_TURNS = 8
 MAX_CALLS = 16
+MAX_TOKENS_PER_TURN = 512        # sent as max_tokens: caps completion cost per turn
+PROMPT_TOKEN_BOUND = 8000        # a turn whose prompt exceeds this ends the run
 REQUEST_TIMEOUT_S = 30.0
 RUN_BUDGET_S = 90.0
+
+
+def worst_case_run_cost(price_in_per_mtok: float, price_out_per_mtok: float) -> float:
+    """Upper bound on one run's cost at list price, given the turn, token, and prompt bounds."""
+    return MAX_TURNS * (PROMPT_TOKEN_BOUND * price_in_per_mtok + MAX_TOKENS_PER_TURN * price_out_per_mtok) / 1_000_000
 
 
 @dataclass(frozen=True)
@@ -64,7 +71,21 @@ class ProviderConfig:
                    price("NECROSHIELD_LLM_PRICE_IN_PER_MTOK"), price("NECROSHIELD_LLM_PRICE_OUT_PER_MTOK"))
 
     def describe(self) -> dict[str, Any]:
+        """Safe to show anywhere: never includes the key or the base URL."""
         return {"provider": self.provider, "model": self.model, "pricing_configured": self.price_in_per_mtok is not None}
+
+    @property
+    def reports_cost(self) -> bool:
+        """OpenRouter returns the charged cost in usage.cost when asked with usage.include."""
+        host = urlparse(self.base_url).hostname or ""
+        return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+    def request_body(self, messages: list[dict[str, Any]], temperature: float) -> dict[str, Any]:
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "tools": tool_schemas(),
+                                "tool_choice": "auto", "temperature": temperature, "max_tokens": MAX_TOKENS_PER_TURN}
+        if self.reports_cost:
+            body["usage"] = {"include": True}
+        return body
 
 
 def tool_schemas() -> list[dict[str, Any]]:
@@ -92,9 +113,10 @@ def _clean(value: Any, limit: int) -> str:
                    for ch in text[:limit])
 
 
-def _parse_completion(body: Any) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]:
+def _parse_completion(body: Any) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     """Validate the provider response shape; raises on anything unexpected."""
-    message = body["choices"][0]["message"]
+    choice = body["choices"][0]
+    message = choice["message"]
     if not isinstance(message, dict):
         raise TypeError("message must be an object")
     requested = message.get("tool_calls") or []
@@ -110,6 +132,11 @@ def _parse_completion(body: Any) -> tuple[dict[str, Any], list[dict[str, Any]], 
         if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < 10**9:
             raise ValueError(f"usage.{key} must be a non-negative integer")
         usage[key] = value
+    cost = raw_usage.get("cost")
+    if cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)) or not 0 <= cost < 1000):
+        raise ValueError("usage.cost must be a non-negative number")
+    usage["cost"] = None if cost is None else float(cost)
+    usage["finish_reason"] = _clean(choice.get("finish_reason"), 32) if isinstance(choice, dict) else ""
     return message, requested, usage
 
 
@@ -137,6 +164,7 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
     messages: list[dict[str, Any]] = [{"role": "system", "content": _system_prompt(scenario)},
                                       {"role": "user", "content": "Begin."}]
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    reported_cost: float | None = 0.0 if config.reports_cost else None
     started, calls, failure = time.monotonic(), 0, None
     http = client or httpx.Client(timeout=REQUEST_TIMEOUT_S)
     try:
@@ -147,10 +175,12 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
             try:
                 response = http.post(f"{config.base_url}/chat/completions",
                                      headers={"Authorization": f"Bearer {config.api_key}"},
-                                     json={"model": config.model, "messages": messages, "tools": tool_schemas(),
-                                           "temperature": temperature})
+                                     json=config.request_body(messages, temperature))
                 response.raise_for_status()
                 message, requested, turn_usage = _parse_completion(response.json())
+            except httpx.HTTPStatusError as exc:
+                failure = f"provider error: HTTP {exc.response.status_code}"
+                break
             except httpx.HTTPError as exc:
                 failure = f"provider error: {type(exc).__name__}"
                 break
@@ -159,11 +189,26 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
                 break
             for k in usage:
                 usage[k] += turn_usage[k]
+            if reported_cost is not None:
+                # A provider that normally reports cost but omits it leaves the run's cost unknown.
+                reported_cost = None if turn_usage["cost"] is None else reported_cost + turn_usage["cost"]
+            refusal = message.get("refusal")
             chain.append("model_turn", {
                 "turn": turn, "content": _clean(message.get("content"), 4000),
+                "refusal": _clean(refusal, 1000) if refusal else None,
+                "finish_reason": turn_usage["finish_reason"],
                 "requested_tools": [_clean(c["function"].get("name"), 64) for c in requested],
             })
-            messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": requested or None})
+            assistant: dict[str, Any] = {"role": "assistant", "content": message.get("content")}
+            if requested:  # some providers reject "tool_calls": null
+                assistant["tool_calls"] = requested
+            messages.append(assistant)
+            if turn_usage["prompt_tokens"] > PROMPT_TOKEN_BOUND:
+                failure = "prompt exceeded the per-turn token bound"
+                break
+            if refusal and not requested:
+                failure = "model refused"
+                break
             if not requested:
                 break
             for request in requested:
@@ -200,6 +245,7 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
         "attack_succeeded": outcome.attack_succeeded, "task_completed": outcome.task_completed,
         "observed_effects": list(outcome.observed_effects), "failure": failure,
         "prompt_tokens": usage["prompt_tokens"], "completion_tokens": usage["completion_tokens"],
+        "provider_reported_cost_usd": "" if reported_cost is None else f"{reported_cost:.8f}",
     })
     return redact({
         "format": LIVE_FORMAT, "evaluation_mode": EVALUATION_MODE, "run_id": run_id,
@@ -207,6 +253,7 @@ def run_live(scenario: Scenario, config: ProviderConfig, protected: bool, temper
         "scenario": {"id": scenario.scenario_id, "version": scenario.version, "digest": scenario.digest()},
         "policy": {"digest": policy.digest(), **policy.to_dict()},
         "usage": usage, "cost_usd": _cost(config, usage["prompt_tokens"], usage["completion_tokens"]),
+        "provider_reported_cost_usd": None if reported_cost is None else round(reported_cost, 8),
         "latency_ms": round((time.monotonic() - started) * 1000, 1),
         "outcome": chain.events[-1]["data"], "head": chain.head, "events": list(chain.events),
     })
