@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import agent
@@ -26,6 +26,7 @@ from ..evidence import redact
 from ..live import ProviderConfig, run_live
 from ..mcp_server import replay_over_mcp
 from ..optimizer import candidate_policy, evolve, theatre
+from ..patches import compile_patch
 from ..metrics import BUNDLE_FORMAT, summarize
 from ..runner import decisive_denials, run_pair
 from ..signing import Signer, SigningUnavailable, load_signer
@@ -220,6 +221,29 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
             except KeyError:
                 raise HTTPException(404, "unknown or non-attack scenario") from None
         return theatre_cache[key]
+
+    patch_cache: dict[tuple, dict[str, Any]] = {}
+
+    @app.get("/api/patch")
+    def patch_view(scenario_id: str = Query(pattern=r"^[a-z][a-z0-9_]{0,63}$"),
+                   base: str = Query("tool_allowlist", pattern=r"^[a-z_]{1,32}$"),
+                   target: str = Query("scoped_trace", pattern=r"^[a-z_]{1,32}$"),
+                   base_from: str | None = Query(None, pattern=r"^[a-z][a-z0-9_]{0,63}$"),
+                   format: str = Query("json", pattern="^(json|md)$")) -> Any:
+        """Compile a proposed security patch from an observed failure. Read-only: nothing is applied."""
+        key = (scenario_id, base, target, base_from)
+        if key not in patch_cache:
+            try:
+                patch_cache[key] = compile_patch(scenario_id, base, target, base_from)
+            except KeyError:
+                raise HTTPException(404, "unknown scenario, strategy, or base") from None
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+        body = patch_cache[key]
+        if format == "md":
+            return PlainTextResponse(body["report_markdown"], headers={
+                "content-disposition": f'attachment; filename="necroshield-patch-{body["patch_id"]}.md"'})
+        return JSONResponse(body, headers={"content-disposition": f'attachment; filename="necroshield-patch-{body["patch_id"]}.json"'})
 
     @app.post("/api/theatre/{scenario_id}/approve", status_code=201)
     def theatre_approve(scenario_id: str, request: ApproveRequest) -> dict[str, Any]:

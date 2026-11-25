@@ -4,6 +4,8 @@
   python -m necroshield run SCENARIO [--db PATH] [--export FILE]
   python -m necroshield benchmark [--db PATH]          run every scenario once and print the table
   python -m necroshield evolve [--variants N] [--out FILE]   closed-loop policy evaluation (keyless)
+  python -m necroshield patch SCENARIO --base STRATEGY [--base-from SCENARIO] --out FILE   compile a security patch
+  python -m necroshield check-patch FILE                  re-check a patch from its own contents
   python -m necroshield keygen --out KEYFILE            create an Ed25519 signing key (prints the public key)
   python -m necroshield sign FILE --key-file KEYFILE --out SIGNED.json   sign a verified export or bundle
   python -m necroshield reset-store --db PATH --yes    delete all stored runs (demo reset)
@@ -18,6 +20,9 @@ import sys
 
 from .runner import decisive_denials, run_pair
 from .catalog import REGISTRY, get_scenario
+from .corpus import CORPUS as _CORPUS
+
+CORPUS_IDS = [sid for sid, s in _CORPUS.items() if s.kind == "attack"]
 from .storage import RunStore
 
 
@@ -112,6 +117,34 @@ def _evolve(variants: int, out: str | None) -> int:
     finally:
         if handle:
             handle.close()
+
+
+def _patch(args: argparse.Namespace) -> int:
+    from .patches import check_patch, compile_patch
+
+    try:
+        patch = compile_patch(args.scenario, args.base, args.target, args.base_from)
+    except ValueError as exc:
+        print(f"no patch: {exc}", file=sys.stderr)
+        return 1
+    with open(args.out, "x", encoding="utf-8") as handle:
+        json.dump(patch, handle, indent=2)
+    problems = check_patch(patch)
+    print(f"patch {patch['patch_id']} for {args.scenario}: {len(patch['operations'])} operations, "
+          f"{sum(r['passed'] for r in patch['results'])}/{len(patch['results'])} regression cases pass, status {patch['activation']['status']}")
+    print("\n".join(f"  {line}" for line in patch["explanation"]))
+    print(f"written to {args.out}" + ("" if not problems else f"; re-check FAILED: {problems}"))
+    return 0 if not problems and patch["all_cases_pass"] else 1
+
+
+def _check_patch(path: str) -> int:
+    from pathlib import Path
+
+    from .patches import check_patch
+
+    problems = check_patch(json.loads(Path(path).read_text(encoding="utf-8")))
+    print("OK: every claim in the patch reproduced" if not problems else "FAIL\n" + "\n".join(f"  - {p}" for p in problems))
+    return 0 if not problems else 1
 
 
 def _keygen(out: str) -> int:
@@ -210,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("scenario", choices=sorted(REGISTRY))
     run.add_argument("--db", default="necroshield.db")
     run.add_argument("--export", help="write the pair export to this new JSON file")
+    patch_cmd = sub.add_parser("patch", help="compile a security patch from an observed failure")
+    patch_cmd.add_argument("scenario", choices=sorted(CORPUS_IDS))
+    patch_cmd.add_argument("--base", default="tool_allowlist", choices=["allow_all", "tool_allowlist", "violation_patch"])
+    patch_cmd.add_argument("--base-from", dest="base_from", help="scenario whose policy was deployed (same trusted task)")
+    patch_cmd.add_argument("--target", default="scoped_trace", choices=["scoped_trace", "exact_trace", "violation_patch"])
+    patch_cmd.add_argument("--out", required=True)
+    check = sub.add_parser("check-patch", help="re-check a patch file from its own contents")
+    check.add_argument("file")
     keygen = sub.add_parser("keygen", help="create an Ed25519 signing key file")
     keygen.add_argument("--out", required=True)
     sign = sub.add_parser("sign", help="sign a verified export or bundle")
@@ -234,6 +275,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "live":
         return _live(args)
+    if args.command == "check-patch":
+        return _check_patch(args.file)
+    if args.command == "patch":
+        try:
+            return _patch(args)
+        except FileExistsError:
+            print(f"refusing to overwrite existing file: {args.out}", file=sys.stderr)
+            return 1
     if args.command in ("keygen", "sign"):
         try:
             return _keygen(args.out) if args.command == "keygen" else _sign(args.file, args.key_file, args.out)

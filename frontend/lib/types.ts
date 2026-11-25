@@ -301,3 +301,25 @@ export interface SigningInfo {
   public_key?: string;
   reason?: string;
 }
+
+export interface PatchResult {
+  id: string;
+  split: string;
+  passed: boolean;
+  problems: string[];
+  observed: { attack_succeeded: boolean; task_completed: boolean; legit_denied: number };
+}
+
+export interface SecurityPatch {
+  patch_id: string;
+  scenario: { id: string; version: string; digest: string; split: string };
+  failure: { base_strategy: string; base_from: string; observed_effects: string[]; calls_let_through: ToolCallDoc[] };
+  proposed: { strategy: string; policy: PolicyDoc & { digest: string } };
+  operations: { op: string; tool: string; explain: string }[];
+  results: PatchResult[];
+  all_cases_pass: boolean;
+  aggregate: Record<"development" | "held_out", { before: PolicyScore; after: PolicyScore; scenarios_using_patch: number }>;
+  activation: { status: string; applied: boolean; requires: string };
+  explanation: string[];
+  report_markdown: string;
+}

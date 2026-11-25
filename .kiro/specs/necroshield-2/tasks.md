@@ -12,7 +12,7 @@
   - _Requirements: R16.4, R23.2_
 - [x] 6. Attack Theatre UI with Pareto chart and approve-and-run
   - _Requirements: R22_
-- [ ] 7. Patch compiler and download
+- [x] 7. Patch compiler and download
   - _Requirements: R18_
 - [x] 8. Signed bundles and pure-Python verification
   - _Requirements: R21_

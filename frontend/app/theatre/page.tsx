@@ -8,7 +8,7 @@ import { Attributions } from "@/components/RunCompare";
 import { ErrorState, Load } from "@/components/States";
 import { api } from "@/lib/api";
 import { argsText, toolCalls } from "@/lib/events";
-import type { Candidate, Rate, RunDetail, Theatre } from "@/lib/types";
+import type { Candidate, Rate, RunDetail, SecurityPatch, Theatre } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 const STAGES = ["Attack", "Red team", "Blue team", "Evaluate", "Approve and verify"] as const;
@@ -103,6 +103,87 @@ function Outcome({ result }: { result: RunDetail }) {
         <Link className="btn" href={`/evidence/?pair=${result.summary.pair_id}`}>Evidence</Link>
       </p>
     </div>
+  );
+}
+
+function download(name: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function PatchPanel({ data }: { data: Theatre }) {
+  const options = [
+    ...data.scenario.peer_attacks.map((peer) => ({ value: `violation_patch|${peer}`, label: `violation_patch that was built for ${peer}` })),
+    { value: "tool_allowlist|", label: "tool_allowlist (tools only, no argument limits)" },
+    { value: "allow_all|", label: "allow_all (no restriction)" },
+  ];
+  const [choice, setChoice] = useState(options[0]?.value ?? "tool_allowlist|");
+  const [patch, setPatch] = useState<SecurityPatch | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function compile() {
+    setBusy(true);
+    setError("");
+    setPatch(null);
+    const [base, from] = choice.split("|");
+    try {
+      setPatch(await api.patch(data.scenario.id, base ?? "tool_allowlist", from || undefined));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="panel stage" aria-labelledby="s6">
+      <h2 id="s6">Security patch</h2>
+      <p className="dim">
+        Pick the policy that was deployed when the attack got through. The compiler reproduces the failure, proposes a fix as
+        structured operations, and re-runs a regression specification on development and held-out scenarios. It applies nothing.
+      </p>
+      <p className="row" style={{ marginTop: 10, alignItems: "flex-end" }}>
+        <label>
+          Deployed policy
+          <select aria-label="Deployed policy" value={choice} onChange={(e) => setChoice(e.target.value)}>
+            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+        <button className="btn" onClick={compile} disabled={busy}>{busy ? "Compiling…" : "Compile security patch"}</button>
+      </p>
+      {error && <p role="alert" className="state state-error" style={{ marginTop: 10 }}>{error}</p>}
+      {patch && (
+        <div className="stack" style={{ marginTop: 14 }} aria-label="Compiled patch">
+          <ul style={{ margin: 0, paddingLeft: 18 }}>{patch.explanation.map((line) => <li key={line}>{line}</li>)}</ul>
+          <div className="table-wrap">
+            <table>
+              <caption className="sr-only">Regression results</caption>
+              <thead><tr><th>Case</th><th>Split</th><th>Result</th></tr></thead>
+              <tbody>
+                {patch.results.map((r) => (
+                  <tr key={r.id}>
+                    <td><code>{r.id}</code></td>
+                    <td>{r.split === "development" ? "development" : "held-out"}</td>
+                    <td>{r.passed ? <span className="chip chip-allowed">pass</span> : <span className="chip chip-failed">fail: {r.problems.join("; ")}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="faint">
+            Status: {patch.activation.status}; applied: {String(patch.activation.applied)}; requires {patch.activation.requires}. Patch{" "}
+            <code>{patch.patch_id}</code>.
+          </p>
+          <p className="row">
+            <button className="btn" onClick={() => download(`necroshield-patch-${patch.patch_id}.json`, JSON.stringify(patch, null, 2), "application/json")}>Download patch (JSON)</button>
+            <button className="btn" onClick={() => download(`necroshield-patch-${patch.patch_id}.md`, patch.report_markdown, "text/markdown")}>Download report (Markdown)</button>
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -283,6 +364,8 @@ export default function TheatrePage() {
               </div>
             </section>
           )}
+
+          {shown(5) && <PatchPanel key={data.scenario.id} data={data} />}
 
           {shown(5) && (
             <section className="panel stage" aria-labelledby="s5">

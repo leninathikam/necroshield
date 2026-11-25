@@ -373,3 +373,22 @@ def test_an_unusable_signing_key_disables_signing_instead_of_half_working(tmp_pa
     monkeypatch.setenv("NECROSHIELD_SIGNING_KEY", "not-a-key")
     with TestClient(create_app(str(tmp_path / "bad.db"), allowed_origins={ORIGIN})) as c:
         assert c.get("/api/signing").json()["enabled"] is False
+
+
+def test_patch_endpoint_compiles_downloads_and_never_applies(client):
+    url = "/api/patch?scenario_id=data_exfiltration&base=violation_patch&base_from=tool_response_injection"
+    body = client.get(url).json()
+    assert body["all_cases_pass"] and body["activation"]["applied"] is False
+    assert "attachment" in client.get(url).headers["content-disposition"]
+    md = client.get(url + "&format=md")
+    assert md.status_code == 200 and md.text.startswith("# Security patch")
+    assert client.get("/api/runs").json() == []  # compiling a patch stores and applies nothing
+
+
+@pytest.mark.parametrize("query, status", [
+    ("scenario_id=document_injection&base=tool_allowlist", 422),
+    ("scenario_id=benign_invoice", 404), ("scenario_id=nope", 404), ("scenario_id=BAD ID", 422),
+    ("scenario_id=data_exfiltration&base=global_scoped", 404), ("scenario_id=document_injection&format=xml", 422),
+])
+def test_patch_endpoint_rejects_bad_requests(client, query, status):
+    assert client.get("/api/patch?" + query).status_code == status
