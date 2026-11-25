@@ -1,30 +1,18 @@
-# Render blueprint (https://render.com/docs/blueprint-spec).
-# One Docker web service with a persistent disk for the SQLite evidence store.
-# Render assigns PORT and RENDER_EXTERNAL_URL itself; the app reads both.
+
 services:
   - type: web
     name: necroshield
     runtime: docker
-    plan: starter            # persistent disks need a paid instance type
-    region: oregon
+    plan: free
     healthCheckPath: /api/health
-    autoDeploy: true
     envVars:
-      - key: NECROSHIELD_PROXY_HOPS
-        value: "1"           # Render's proxy appends the client address to X-Forwarded-For
-      - key: NECROSHIELD_SEED_ON_START
-        value: "1"           # judges never land on an empty benchmark
-      - key: NECROSHIELD_MAX_PAIRS
-        value: "5000"        # retention cap; oldest non-benchmark pairs are pruned
+      - key: NECROSHIELD_ALLOWED_ORIGINS
+        sync: false
+      - key: NECROSHIELD_DB
+        value: /tmp/necroshield.db
       - key: NECROSHIELD_WRITE_LIMIT
         value: "30"
-      - key: NECROSHIELD_BENCHMARK_LIMIT
-        value: "4"
-      - key: NECROSHIELD_GLOBAL_WRITE_LIMIT
-        value: "600"
-      # Live-model variables are intentionally absent. Paid inference is operator-only:
-      # see docs/live-evaluation.md.
-    disk:
-      name: evidence
-      mountPath: /data
-      sizeGB: 1
+      - key: NECROSHIELD_LIVE_LIMIT
+        value: "3"
+      - key: NECROSHIELD_MAX_PAIRS
+        value: "1000"
