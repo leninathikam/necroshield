@@ -12,17 +12,21 @@
 | Non-root runtime | uid/gid 10001, no supplementary groups; checked in CI through `/proc/1/status`. |
 
 ## Render (blueprint in `render.yaml`)
-1. Render dashboard → **New → Blueprint** → connect `leninathikam/necroshield` → apply.
-2. The blueprint creates the Docker web service `necroshield` (plan `starter`) with a 1 GB disk at `/data`. Persistent disks require a paid instance type.
-3. When the deploy is live, run the post-deploy checks below with the `onrender.com` URL.
+The blueprint uses the **free plan with the database in `/tmp`**, as the participant chose in commit `d5b4f7a`:
+1. Render dashboard → **New → Blueprint** → connect `leninathikam/necroshield` → apply. Leave `NECROSHIELD_ALLOWED_ORIGINS` empty. The public origin is accepted automatically, both as same-origin and through `RENDER_EXTERNAL_URL`.
+2. When the deploy is live, run the post-deploy checks below against the `onrender.com` URL.
 
-Cost: one starter instance plus a 1 GB disk, kept running from deployment through **January 29, 2027** (the end of judging). Check Render's current pricing before choosing.
+Free-plan consequences:
+- The instance sleeps when idle, and the first visit after a sleep waits for it to start.
+- `/tmp` is erased on every restart or sleep, so visitors' runs do not persist.
+- `NECROSHIELD_SEED_ON_START=1` re-creates one verified pair per scenario on every boot, so the benchmark and every page always have data.
+- CI runs this exact configuration (`free-plan configuration from render.yaml`).
 
-The free plan works without the disk, with two consequences:
-- The service sleeps when idle and takes time to wake.
-- Its filesystem is ephemeral.
+To keep history and avoid cold starts through **January 29, 2027** (the end of judging), upgrade to a paid instance type, which disks require. Then:
+- add a disk mounted at `/data`;
+- set `NECROSHIELD_DB=/data/necroshield.db`.
 
-`NECROSHIELD_SEED_ON_START=1` re-creates a verified benchmark on every boot, so pages are never empty, but visitors' runs are lost on restart.
+The entrypoint takes ownership of a root-owned disk and then drops to uid 10001. CI tests this with a root-owned mount and a restart.
 
 ## Post-deploy checks (run against the public URL)
 ```
@@ -59,7 +63,7 @@ Writes are unauthenticated on purpose, so judges need no account. These limits b
 | Global writes | 600/min | Bounds total work across all clients |
 | Per-client reads | 600/min | Each read re-verifies evidence |
 | Body size | 256 KB, also enforced while streaming | |
-| Retention | 5000 pairs | The oldest pairs are pruned; the newest default-policy pair per scenario is always kept, so the benchmark never empties |
+| Retention | 1000 pairs (blueprint) | The oldest pairs are pruned; the newest default-policy pair per scenario is always kept, so the benchmark never empties |
 | Live model runs | disabled | They need a provider and an operator token; never available to visitors |
 
 Every request is limited to synthetic scenarios: there are no file, network, or process tools. Uploaded evidence is only parsed and verified, never executed or stored. Deeply nested or malformed JSON returns 400 or 422.
@@ -72,10 +76,10 @@ Removes all stored runs, keeps the service running, and reseeds on the next rest
 # Render → service → Shell
 python -m necroshield reset-store --db /data/necroshield.db --yes
 ```
-Then trigger **Manual Deploy → Restart** to reseed the benchmark, or run `POST /api/benchmark` from the UI.
+Then trigger **Manual Deploy → Restart** to reseed the benchmark, or press **Run benchmark** in Benchmark Studio. On the free plan, a restart alone also resets the data, because `/tmp` is cleared. The Render Shell may not be available on free instances.
 
 ## Keeping it up through January 29, 2027
-- Use a paid instance, so it does not sleep, with the disk attached.
+- The free plan stays reachable but sleeps when idle. A judge's first request waits for the instance to start. A paid instance avoids this.
 - Render restarts the service when `/api/health` fails its health check.
 - Keep `autoDeploy: true` only if `main` stays green. Every push runs the full CI.
 - Leave the live-model variables unset on the public service.

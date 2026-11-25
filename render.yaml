@@ -1,4 +1,7 @@
-
+# Render blueprint (https://render.com/docs/blueprint-spec).
+# Free plan, as chosen by the participant: no persistent disk, so the database lives in /tmp and
+# is lost when the instance restarts or sleeps. Seeding on start keeps the benchmark populated.
+# Render assigns PORT and RENDER_EXTERNAL_URL itself; the app reads both.
 services:
   - type: web
     name: necroshield
@@ -7,12 +10,22 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: NECROSHIELD_ALLOWED_ORIGINS
-        sync: false
+        sync: false          # optional: same-origin and RENDER_EXTERNAL_URL are already accepted
       - key: NECROSHIELD_DB
         value: /tmp/necroshield.db
+      - key: NECROSHIELD_SEED_ON_START
+        value: "1"           # free instances sleep and lose /tmp; reseed so judges never see an empty benchmark
+      - key: NECROSHIELD_PROXY_HOPS
+        value: "1"           # key rate limits on each visitor, not on Render's proxy
       - key: NECROSHIELD_WRITE_LIMIT
         value: "30"
+      - key: NECROSHIELD_BENCHMARK_LIMIT
+        value: "4"
+      - key: NECROSHIELD_GLOBAL_WRITE_LIMIT
+        value: "600"
       - key: NECROSHIELD_LIVE_LIMIT
         value: "3"
       - key: NECROSHIELD_MAX_PAIRS
         value: "1000"
+      # Live-model variables are intentionally absent: paid inference is operator-only
+      # (docs/live-evaluation.md).

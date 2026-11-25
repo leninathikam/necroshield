@@ -202,5 +202,13 @@ jobs:
         run: |
           docker exec ns python -m necroshield reset-store --db /data/necroshield.db --yes
           test "$(curl -sf http://127.0.0.1:10000/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")" = 0
+      - name: free-plan configuration from render.yaml (database in /tmp, no disk)
+        run: |
+          docker run -d --name nsfree -p 10001:10000 -e PORT=10000 -e NECROSHIELD_DB=/tmp/necroshield.db \
+            -e NECROSHIELD_SEED_ON_START=1 -e NECROSHIELD_PROXY_HOPS=1 -e NECROSHIELD_MAX_PAIRS=1000 necroshield:ci
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:10001/api/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:10001/api/benchmark | python3 -c "import json,sys; b=json.load(sys.stdin); assert b['missing_scenarios'] == [], b; print('free plan: seeded', b['summary']['scenarios'], 'scenarios')"
+          docker exec nsfree stat -c '%a %U' /tmp | grep -qx '1777 root'
+          docker exec nsfree cat /proc/1/status | grep -E "^Uid:\s+10001\s"
       - if: always()
         run: docker logs ns || true

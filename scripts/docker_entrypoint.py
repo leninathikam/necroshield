@@ -20,7 +20,10 @@ def main() -> None:
     data = db.parent
     if os.getuid() == 0:
         data.mkdir(parents=True, exist_ok=True)
-        for path in (data, db, Path(f"{db}-wal"), Path(f"{db}-shm"), Path(f"{db}-journal")):
+        # Take over a dedicated data directory (a mounted disk), but never a shared one such as /tmp.
+        shared = data.stat().st_mode & 0o002
+        for path in ((db, Path(f"{db}-wal"), Path(f"{db}-shm"), Path(f"{db}-journal")) if shared
+                     else (data, db, Path(f"{db}-wal"), Path(f"{db}-shm"), Path(f"{db}-journal"))):
             if path.exists():
                 os.chown(path, SERVICE_UID, SERVICE_GID)
         os.setgroups([])
