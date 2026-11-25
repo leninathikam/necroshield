@@ -75,9 +75,8 @@ ok(call("POST", "/api/runs", {"scenario_id": "x" * 10000}, {"x-forwarded-for": "
 # 2.0: evolution, theatre, patch compiler, MCP trust, signing posture.
 status, body = call("GET", "/api/evolution")
 evo = json.loads(body)
-ok(status == 200 and evo["selected"] == "scoped_trace" and evo["corpus"]["scenarios"] == 21, "evolution selects scoped_trace over 21 scenarios")
-ok(any(r["name"] == "violation_patch" and r["held_out"]["transfer_prevented"]["numerator"] == 0 for r in evo["strategies"]),
-   "the overfitting finding is reproduced in the deployed build")
+ok(status == 200 and evo["selected"] == "scoped_trace" and evo["corpus"]["scenarios"] == 22, "evolution selects scoped_trace over 22 scenarios")
+ok(evo["selected_held_out_leaks"] == ["memory_overwrite_allowed_key"], "the held-out failure of the selected policy is reported, not hidden")
 status, body = call("GET", "/api/theatre/tool_response_injection")
 ok(status == 200 and json.loads(body)["selected"] == "scoped_trace", "theatre selects a verified candidate")
 status, body = call("POST", "/api/theatre/tool_response_injection/approve", {"strategy": "scoped_trace"}, same)

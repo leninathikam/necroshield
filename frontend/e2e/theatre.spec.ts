@@ -44,11 +44,17 @@ test("policy lab shows strategies, held-out results, and the overfitting finding
   await page.goto("/lab/");
   await expect(page.getByRole("heading", { name: "Policy Lab" })).toBeVisible();
   const row = (name: string) => page.getByRole("table", { name: /development and held-out/ }).getByRole("row", { name: new RegExp(name) });
-  await expect(row("violation_patch")).toContainText("0/4");
-  await expect(row("scoped_trace")).toContainText("4/4");
+  await expect(row("violation_patch")).toContainText("1/5");
+  await expect(row("scoped_trace")).toContainText("4/5");
   await expect(row("scoped_trace")).toContainText("suggested");
+  await expect(row("scoped_trace")).toContainText("let through on held-out: memory_overwrite_allowed_key");
+  await expect(row("scoped_trace")).toContainText("compiled from each plan");
+  await expect(row("global_scoped")).toContainText("held-out is a generalisation test");
   await expect(row("allow_all")).toContainText("rejected");
-  await expect(row("global_scoped")).toContainText("7/11");
+  await expect(row("global_scoped")).toContainText("7/12");
+  const finding = page.getByLabel("Held-out finding");
+  await expect(finding).toContainText("memory_overwrite_allowed_key");
+  await expect(finding).toContainText("not a proven optimum");
   await expect(page.getByRole("link", { name: "Download results (JSON)" })).toHaveAttribute("href", /api\/evolution/);
   await expect(page.getByText("Read this before quoting a number")).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -103,7 +109,7 @@ test("mcp trust: clean manifest, drift refused with a readable diff, exact appro
   await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();
   const result = page.getByLabel("Inspection result");
   await expect(result).toContainText("matches the approved manifest");
-  await expect(result).toContainText("may activate");
+  await expect(result).toContainText("allowed under this approval");
 
   await page.getByLabel("Synthetic drift").selectOption("description_injection");
   await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();

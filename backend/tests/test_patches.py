@@ -99,3 +99,39 @@ def test_patch_cli_round_trip(tmp_path):
     broken["proposed"]["policy"]["grants"].pop()
     out.write_text(json.dumps(broken))
     assert run("check-patch", str(out)).returncode == 1
+
+
+def test_a_forged_allow_all_patch_with_a_trimmed_spec_is_rejected(transfer_patch):
+    """Reviewer probe: swap in allow_all, keep one case, recompute the id. Self-consistency must not be enough."""
+    from necroshield.contracts import canonical_json
+    import hashlib
+    from necroshield.synthesis import allow_all
+    from necroshield.corpus import CORPUS
+    forged = copy.deepcopy(transfer_patch)
+    policy = allow_all(CORPUS["data_exfiltration"])
+    forged["proposed"] = {"strategy": "scoped_trace", "policy": {**policy.to_dict(), "digest": policy.digest()}}
+    forged["regression_spec"] = forged["regression_spec"][:1]
+    forged["results"] = forged["results"][:1]
+    core = {k: forged[k] for k in ("format", "scenario", "failure", "proposed", "operations", "regression_spec")}
+    forged["patch_id"] = hashlib.sha256(canonical_json(core).encode()).hexdigest()[:16]
+    problems = check_patch(forged)
+    assert any("differs from the recompiled patch" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("key, value", [("all_cases_pass", False), ("results", []), ("aggregate", {}), ("explanation", ["fine"]),
+                                        ("report_markdown", "ok")])
+def test_every_top_level_claim_is_checked_against_the_recompiled_patch(transfer_patch, key, value):
+    broken = copy.deepcopy(transfer_patch)
+    broken[key] = value
+    assert any(f"'{key}' differs" in p or "recorded results" in p for p in check_patch(broken)), check_patch(broken)
+
+
+def test_cli_does_not_write_a_patch_that_fails_its_own_recheck(tmp_path, monkeypatch):
+    import necroshield.patches as patches
+    original = patches.check_patch
+    monkeypatch.setattr(patches, "check_patch", lambda p: ["simulated"])
+    from necroshield.__main__ import main
+    out = tmp_path / "patch.json"
+    assert main(["patch", "data_exfiltration", "--base", "violation_patch", "--base-from", "tool_response_injection", "--out", str(out)]) == 1
+    assert not out.exists()
+    monkeypatch.setattr(patches, "check_patch", original)

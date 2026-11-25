@@ -40,19 +40,33 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+def canonical_schema(value: Any) -> Any:
+    """The full input schema with only `title` keys removed (the SDK generates them from function names;
+    they carry no meaning). Everything else counts: descriptions, enums, patterns, lengths, formats,
+    defaults, and additionalProperties are all ways to change what a model is told or allowed to send."""
+    if isinstance(value, dict):
+        return {k: canonical_schema(v) for k, v in sorted(value.items()) if k != "title"}
+    if isinstance(value, list):
+        return [canonical_schema(v) for v in value]
+    return value
+
+
 def normalize_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Reduce a JSON schema to {properties: {name: 'string' | 'string?'}, required: [...]}. Titles and
-    defaults are presentation, not capability, so they do not count as drift."""
+    """A short, human-readable summary: {properties: {name: 'string' | 'string?'}, required: [...]}.
+    For display and for the headline diff only; the hash covers the full canonical schema."""
     props: dict[str, str] = {}
     for name, spec in (schema.get("properties") or {}).items():
-        kinds = [spec["type"]] if "type" in spec else [k.get("type", "?") for k in spec.get("anyOf", [])]
+        raw = spec.get("type")
+        kinds = (list(raw) if isinstance(raw, list) else [raw]) if raw is not None else [k.get("type", "?") for k in spec.get("anyOf", [])]
         base = "|".join(sorted(k for k in kinds if k != "null")) or "?"
         props[name] = base + ("?" if "null" in kinds else "")
     return {"properties": dict(sorted(props.items())), "required": sorted(schema.get("required") or [])}
 
 
-def tool_entry(name: str, description: str, schema: dict[str, Any], capabilities: dict[str, Any] | None = None) -> dict[str, Any]:
-    entry = {"name": name, "description": description, "input": normalize_schema(schema),
+def tool_entry(name: str, description: str, schema: dict[str, Any], capabilities: dict[str, Any] | None = None,
+               annotations: dict[str, Any] | None = None) -> dict[str, Any]:
+    entry = {"name": name, "description": description, "input": normalize_schema(schema), "schema": canonical_schema(schema),
+             "annotations": annotations or {},
              "capabilities": capabilities if capabilities is not None else CAPABILITIES.get(name, UNDECLARED)}
     return {**entry, "hash": _sha(entry)}
 
@@ -66,8 +80,10 @@ def declared_manifest() -> dict[str, Any]:
     """What the code says the sandbox exposes, built from the tool specs (not from a running server)."""
     entries = []
     for spec in TOOLS.values():
-        schema = {"properties": {**{a: {"type": "string"} for a in spec.required},
-                                 **{a: {"anyOf": [{"type": "string"}, {"type": "null"}]} for a in spec.optional}},
+        # Mirrors the schema FastMCP derives from the handler signatures (titles are dropped by canonical_schema).
+        schema = {"type": "object",
+                  "properties": {**{a: {"type": "string"} for a in spec.required},
+                                 **{a: {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None} for a in spec.optional}},
                   "required": list(spec.required)}
         entries.append(tool_entry(spec.name, spec.description, schema))
     return build_manifest(entries)
@@ -76,7 +92,11 @@ def declared_manifest() -> dict[str, Any]:
 def manifest_from_listing(tools: list[Any]) -> dict[str, Any]:
     """Build the observed manifest from an MCP `tools/list` result (objects with name, description,
     inputSchema)."""
-    return build_manifest([tool_entry(t.name, t.description or "", t.inputSchema or {}) for t in tools])
+    def annotations(t: Any) -> dict[str, Any]:
+        raw = getattr(t, "annotations", None)
+        return raw.model_dump(exclude_none=True) if raw is not None and hasattr(raw, "model_dump") else dict(raw or {})
+
+    return build_manifest([tool_entry(t.name, t.description or "", t.inputSchema or {}, None, annotations(t)) for t in tools])
 
 
 def load_approved() -> dict[str, Any]:
@@ -87,6 +107,20 @@ def load_approved() -> dict[str, Any]:
 
 def _change(tool: str, kind: str, severity: str, summary: str, before: Any = None, after: Any = None) -> dict[str, Any]:
     return {"tool": tool, "kind": kind, "severity": severity, "summary": summary, "before": before, "after": after}
+
+
+def _short(value: Any) -> str:
+    text = json.dumps(value, sort_keys=True) if not isinstance(value, str) else repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def _raw_changes(before: Any, after: Any, path: str = "$"):
+    """Yield (path, before, after) for every leaf at which two canonical schemas differ."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        for key in sorted(set(before) | set(after)):
+            yield from _raw_changes(before.get(key), after.get(key), f"{path}.{key}")
+    elif before != after:
+        yield path, before, after
 
 
 def diff(approved: dict[str, Any], observed: dict[str, Any]) -> list[dict[str, Any]]:
@@ -120,6 +154,14 @@ def diff(approved: dict[str, Any], observed: dict[str, Any]) -> list[dict[str, A
                                    bi["properties"][prop], ai["properties"][prop]))
         if bi["required"] != ai["required"]:
             out.append(_change(name, "required_changed", "change", f"Required arguments of '{name}' changed: {bi['required']} -> {ai['required']}.", bi["required"], ai["required"]))
+        if bi == ai and before["schema"] != after["schema"]:
+            for path, was, now in _raw_changes(before["schema"], after["schema"]):
+                risky = any(part in path for part in ("description", "enum", "pattern", "additionalProperties", "maxLength", "format", "const", "anyOf", "oneOf", "allOf"))
+                out.append(_change(name, "schema_detail_changed", "escalation" if risky else "change",
+                                   f"'{name}' input schema changed at {path}: {_short(was)} -> {_short(now)}.", was, now))
+        if before["annotations"] != after["annotations"]:
+            out.append(_change(name, "annotations_changed", "escalation", f"Behaviour hints of '{name}' changed: {before['annotations']} -> {after['annotations']}.",
+                               before["annotations"], after["annotations"]))
         bc, ac = before["capabilities"], after["capabilities"]
         for effect in sorted(set(ac["effects"]) - set(bc["effects"])):
             out.append(_change(name, "capability_added", "escalation", f"'{name}' gained the effect '{effect}'.", bc["effects"], ac["effects"]))
@@ -159,8 +201,7 @@ def _capability_escalation(manifest: dict[str, Any]) -> dict[str, Any]:
     for t in manifest["tools"]:
         if t["name"] == "send_message":
             caps = {**t["capabilities"], "effects": [*t["capabilities"]["effects"], "network:outbound"], "egress": "any host"}
-            t = tool_entry(t["name"], t["description"], {"properties": {k: {"type": v.rstrip("?")} if not v.endswith("?") else {"anyOf": [{"type": v[:-1]}, {"type": "null"}]}
-                                                                    for k, v in t["input"]["properties"].items()}, "required": t["input"]["required"]}, caps)
+            t = tool_entry(t["name"], t["description"], t["schema"], caps, t["annotations"])
         tools.append(t)
     return build_manifest(tools)
 

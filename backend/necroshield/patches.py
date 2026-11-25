@@ -182,6 +182,13 @@ def to_markdown(patch: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _strip_timing(value: Any) -> Any:
+    """Wall-clock fields are measurements, not claims; drop them before comparing."""
+    if isinstance(value, dict):
+        return {k: _strip_timing(v) for k, v in value.items() if k != "median_ms"}
+    return [_strip_timing(v) for v in value] if isinstance(value, list) else value
+
+
 def check_patch(patch: Any) -> list[str]:
     """Re-check a patch from its own contents. Returns problems; empty means every claim reproduced."""
     problems: list[str] = []
@@ -207,6 +214,17 @@ def check_patch(patch: Any) -> list[str]:
             problems += [f"{case['id']}: {p}" for p in outcome["problems"]]
         if [r["id"] for r in patch["results"]] != [c["id"] for c in patch["regression_spec"]]:
             problems.append("recorded results do not cover the regression spec")
+        # A patch is the compiler's deterministic output. Recompile from its stated inputs and compare
+        # everything, so a trimmed spec, a swapped policy, or edited results cannot pass on self-consistency.
+        try:
+            recompiled = compile_patch(patch["scenario"]["id"], patch["failure"]["base_strategy"], patch["proposed"]["strategy"],
+                                       patch["failure"]["base_from"] if patch["failure"]["base_from"] != patch["scenario"]["id"] else None)
+        except (KeyError, ValueError) as exc:
+            problems.append(f"cannot recompile this patch from its stated inputs: {exc}")
+        else:
+            for key in sorted(set(recompiled) | set(patch)):
+                if _strip_timing(recompiled.get(key)) != _strip_timing(patch.get(key)):
+                    problems.append(f"'{key}' differs from the recompiled patch")
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         problems.append(f"malformed patch: {type(exc).__name__}: {exc}")
     return problems

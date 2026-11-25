@@ -10,6 +10,7 @@ one, and shows how it behaves on scenarios that played no part in the selection.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from statistics import mean, median
 from typing import Any, Callable, Iterable
@@ -164,24 +165,42 @@ def pick(scores: dict[str, dict[str, Any]], names: Iterable[str]) -> str | None:
 
 
 _cache: dict[int, dict[str, Any]] = {}
+_cache_lock = threading.Lock()
+
+
+def _plan_only(strategy: Strategy) -> bool:
+    """True when the policy depends only on the scenario's trusted plan. For those, applying one scenario's
+    policy to another scenario with the same plan is the same policy by construction, so its transfer
+    score cannot show generalisation."""
+    return strategy.scope == "per-scenario" and "violations" not in strategy.inputs
 
 
 def evolve(per_attack_variants: int = VARIANTS_PER_ATTACK) -> dict[str, Any]:
     """Full closed-loop evaluation over the corpus. Deterministic, keyless, and cached (inputs are immutable)."""
     per_attack_variants = max(0, min(per_attack_variants, MAX_VARIANTS_PER_ATTACK))
-    if per_attack_variants in _cache:
+    with _cache_lock:  # one computation per distinct request, not one per concurrent caller
+        if per_attack_variants not in _cache:
+            _cache[per_attack_variants] = _evolve(per_attack_variants)
         return _cache[per_attack_variants]
+
+
+def _evolve(per_attack_variants: int) -> dict[str, Any]:
     dev, hold = list(development()), list(held_out())
 
     rows: dict[str, dict[str, Any]] = {}
     for strategy in STRATEGIES:
         dev_evals = evaluate_strategy(strategy, dev, dev)
+        hold_evals = evaluate_strategy(strategy, dev, hold)
         feasible, reason = feasibility(dev_evals)
         rows[strategy.name] = {
             "name": strategy.name, "scope": strategy.scope, "inputs": strategy.inputs,
             "description": strategy.description, "feasible": feasible, "rejection": reason,
+            "generalisation_test": strategy.scope == "global",
+            "held_out_basis": ("fitted on development scenarios only: a real generalisation test" if strategy.scope == "global"
+                               else "compiled from each held-out scenario's own trusted plan: NOT a generalisation test"),
+            "held_out_leaks": [e.scenario_id for e in hold_evals if e.kind == "attack" and e.attack_succeeded],
             "development": score(dev_evals),
-            "held_out": score(evaluate_strategy(strategy, dev, hold)),
+            "held_out": score(hold_evals),
             "variants": {
                 "development": score(evaluate_on_variants(strategy, dev, dev, per_attack_variants)),
                 "held_out": score(evaluate_on_variants(strategy, dev, hold, per_attack_variants)),
@@ -189,6 +208,8 @@ def evolve(per_attack_variants: int = VARIANTS_PER_ATTACK) -> dict[str, Any]:
             "transfer": {
                 "development": _transfer_rate(evaluate_transfer(strategy, dev, dev, dev)),
                 "held_out": _transfer_rate(evaluate_transfer(strategy, dev, dev, hold)),
+                "unit": "ordered (source, target) pairs, so one target can be counted more than once",
+                "by_construction": _plan_only(strategy),
             },
         }
         rows[strategy.name]["development"]["transfer_prevented"] = rows[strategy.name]["transfer"]["development"]
@@ -211,11 +232,14 @@ def evolve(per_attack_variants: int = VARIANTS_PER_ATTACK) -> dict[str, Any]:
              "score": score(evaluate_scenario(s, s.policy) for s in scenarios)},
         ]
         if chosen:
-            arm_rows.append({"arm": "synthesized", "policy": chosen.name,
+            arm_rows.append({"arm": "synthesized", "policy": f"{chosen.name}, compiled from each scenario's own trusted plan",
+                             "basis": "per-scenario: reads the plan of the scenario it is scored on",
                              "score": score(evaluate_strategy(chosen, dev, scenarios))})
         arms[label] = arm_rows
 
     attacks = [s for s in CORPUS.values() if s.kind == "attack"]
+    variant_counts = {s.scenario_id: len(variants(s, per_attack_variants)) for s in attacks}
+    selected_row = rows.get(selected) if selected else None
     result = {
         "corpus": {
             "scenarios": len(CORPUS), "attack_scenarios": len(attacks),
@@ -226,16 +250,23 @@ def evolve(per_attack_variants: int = VARIANTS_PER_ATTACK) -> dict[str, Any]:
             "held_out": {"scenarios": len(hold), "attacks": sum(s.kind == "attack" for s in hold),
                          "controls": sum(s.kind == "control" for s in hold)},
             "variants_per_attack": per_attack_variants,
-            "note": ("The split was fixed before any synthesis ran and is author-chosen. Variants change attacker-chosen "
-                     "values only and are not independent attack classes."),
+            "variant_counts": variant_counts,
+            "attacks_without_variants": sorted(k for k, v in variant_counts.items() if v == 0),
+            "note": ("The split was fixed before any synthesis ran and is author-chosen; one held-out attack was added later "
+                     "after a review (see caveats). Variants change attacker-chosen values only and are not independent attack classes."),
         },
         "evaluation_mode": "deterministic_intent_replay",
         "objectives": OBJECTIVES, "selection_rule": SELECTION_RULE, "selected": selected,
+        "selected_held_out_leaks": selected_row["held_out_leaks"] if selected_row else [],
         "strategies": list(rows.values()), "arms": arms,
         "caveats": [
-            "Per-scenario strategies read each scenario's trusted plan (its task specification), so they are not blind to the task.",
-            "Global strategies are fitted on development scenarios only; their held-out results show generalisation.",
-            "The selected candidate is the non-dominated one preferred by a fixed tie-break, not a proven optimum.",
+            "Per-scenario strategies read each scenario's own trusted plan, so their held-out numbers are NOT a generalisation test: they show that a policy compiled from the right plan works, not that it transfers.",
+            "Only the global strategies are fitted on development scenarios alone; their held-out results are the real generalisation evidence, and they are weak.",
+            "The selected candidate is the non-dominated one preferred by a fixed tie-break, not a proven optimum, and it can fail held-out attacks (see selected_held_out_leaks).",
+            "Cross-attack transfer was added to the objectives after a held-out result showed the cheapest patch overfitting, so held-out data influenced the design of the objective set (though selection still uses development scores only).",
+            "The held-out attack memory_overwrite_allowed_key was added after an independent review, to probe the free-text channel. It was not used in selection.",
+            "Transfer is counted in ordered (source, target) pairs and is true by construction for strategies that depend only on the plan.",
+            "The corpus is small and author-built; the split is author-chosen. Variants change attacker values only, and some attacks have none.",
             "These are deterministic fixture results; they say nothing about how a language model behaves.",
         ],
     }

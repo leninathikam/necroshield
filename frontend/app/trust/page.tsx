@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Load } from "@/components/States";
 import { api } from "@/lib/api";
 import type { Inspection, ManifestChange } from "@/lib/types";
@@ -31,16 +31,22 @@ export default function TrustPage() {
   const [result, setResult] = useState<Inspection | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const generation = useRef(0);
 
   async function inspect(approve?: string) {
+    // A late response from an earlier inspection must never replace a newer one, and approving
+    // always re-inspects the drift that produced the result on screen, not whatever is selected now.
+    const mine = ++generation.current;
+    const target = approve && result ? result.drift : drift || null;
     setBusy(true);
     setError("");
     try {
-      setResult(await api.inspect(drift || null, approve));
+      const next = await api.inspect(target, approve);
+      if (mine === generation.current) setResult(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mine === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (mine === generation.current) setBusy(false);
     }
   }
 
@@ -89,7 +95,9 @@ export default function TrustPage() {
               <h2 style={{ marginBottom: 8 }}>Inspect the live sandbox</h2>
               <p className="dim" style={{ marginBottom: 10 }}>
                 Reads <code>tools/list</code> from the sandbox&apos;s MCP server and compares it with the approved manifest. Pick a
-                synthetic drift to see what the sandbox would advertise if its definitions changed.
+                synthetic drift to see what the sandbox would advertise if its definitions changed. MCP does not advertise capabilities:
+                the capability column is NecroShield&apos;s own annotation, and the capability example is a mutation applied by the server.
+                Approval here is a request parameter for demonstration: it is simulated, covers one digest, and is not persisted.
               </p>
               <p className="row" style={{ alignItems: "flex-end" }}>
                 <label>
@@ -98,6 +106,7 @@ export default function TrustPage() {
                     aria-label="Synthetic drift"
                     value={drift}
                     onChange={(e) => {
+                      generation.current++;
                       setDrift(e.target.value);
                       setResult(null);
                     }}
@@ -117,7 +126,7 @@ export default function TrustPage() {
                 <div className="stack" style={{ marginTop: 14 }} aria-label="Inspection result" role="status">
                   <p className="row">
                     <span className={`chip ${result.activate ? "chip-allowed" : "chip-failed"}`}>
-                      {result.activate ? "may activate" : "activation refused"}
+                      {result.activate ? "allowed under this approval" : "activation refused"}
                     </span>
                     <span>{result.status}</span>
                   </p>

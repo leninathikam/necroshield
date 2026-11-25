@@ -127,9 +127,12 @@ def _patch(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"no patch: {exc}", file=sys.stderr)
         return 1
+    problems = check_patch(patch)
+    if problems or not patch["all_cases_pass"]:
+        print("refusing to write a patch that does not re-check cleanly:", *problems, sep="\n  - ", file=sys.stderr)
+        return 1
     with open(args.out, "x", encoding="utf-8") as handle:
         json.dump(patch, handle, indent=2)
-    problems = check_patch(patch)
     print(f"patch {patch['patch_id']} for {args.scenario}: {len(patch['operations'])} operations, "
           f"{sum(r['passed'] for r in patch['results'])}/{len(patch['results'])} regression cases pass, status {patch['activation']['status']}")
     print("\n".join(f"  {line}" for line in patch["explanation"]))

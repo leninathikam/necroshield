@@ -1,8 +1,9 @@
 {
-  "digest": "709cf1f72eac0d5e1663977a6a0d63eb11593ccbbbd1fca8ae9c1370a676c2c8",
+  "digest": "30d73d5ba52fd63ccce101dcdd2926983f6f2bce58b3db081a2b7f8c6a34e2b7",
   "format": "necroshield.mcp-manifest/1",
   "tools": [
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "read:customer-record"
@@ -11,7 +12,7 @@
         "sensitivity": "synthetic personal data"
       },
       "description": "Retrieve one synthetic customer record.",
-      "hash": "8cf2d800584ccaec9af70478ca5142b4dc8600ba30ad0fb4dea7eb2f6af27ec2",
+      "hash": "81e077a90c6c1e65774100291be96755378ce6f19b82c1d5b6c6a0ac1e83fdbe",
       "input": {
         "properties": {
           "customer_id": "string"
@@ -20,9 +21,21 @@
           "customer_id"
         ]
       },
-      "name": "get_customer_record"
+      "name": "get_customer_record",
+      "schema": {
+        "properties": {
+          "customer_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "type": "object"
+      }
     },
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "read:document"
@@ -31,7 +44,7 @@
         "sensitivity": "synthetic document"
       },
       "description": "Read a synthetic document by path.",
-      "hash": "b8755bf29e79b001b89cf7c3932d3e1ed1e6c827a6ca8ee68877e4b0f83a9fc9",
+      "hash": "87a589996105456daffcaf10c3ef1d5436ed8af9e1e3e15cff258a327ad89e42",
       "input": {
         "properties": {
           "path": "string"
@@ -40,9 +53,21 @@
           "path"
         ]
       },
-      "name": "read_document"
+      "name": "read_document",
+      "schema": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
     },
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "read:agent-memory"
@@ -51,7 +76,7 @@
         "sensitivity": "synthetic memory"
       },
       "description": "Read a value from synthetic agent memory.",
-      "hash": "212412fcd0fa7c9f79a2d1c5a09ff69940c65735df95661308c53ee6d3beae20",
+      "hash": "b59b2972042143638c525ef87bfa26ff4b415df26a37319e97c1135def3963c9",
       "input": {
         "properties": {
           "key": "string"
@@ -60,9 +85,21 @@
           "key"
         ]
       },
-      "name": "read_memory"
+      "name": "read_memory",
+      "schema": {
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "type": "object"
+      }
     },
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "write:in-memory-sink"
@@ -71,7 +108,7 @@
         "sensitivity": "synthetic message"
       },
       "description": "Send a message to the in-memory synthetic sink (*.invalid only).",
-      "hash": "ef76c72857169949fd49963dbaf2e75c4ce87409ce12ab11d3ccdf9b0ad1f6de",
+      "hash": "420b4b2bf9870ec4e0b1427c445d5a477fd8d94e441a7f633dabc1479f4f22a6",
       "input": {
         "properties": {
           "attach": "string?",
@@ -82,9 +119,43 @@
           "to"
         ]
       },
-      "name": "send_message"
+      "name": "send_message",
+      "schema": {
+        "properties": {
+          "attach": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      }
     },
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "write:agent-memory"
@@ -93,7 +164,7 @@
         "sensitivity": "synthetic memory"
       },
       "description": "Write a value into synthetic agent memory.",
-      "hash": "0fa29728f5e8a95457a900bb8ec78a86f34aabdc8bfc275f90adca60bfdb9579",
+      "hash": "88ec15b4f5d05b695e128f9acba69f464fe7cda22021dadc120cecbc33620f60",
       "input": {
         "properties": {
           "key": "string",
@@ -104,9 +175,25 @@
           "value"
         ]
       },
-      "name": "write_memory"
+      "name": "write_memory",
+      "schema": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      }
     },
     {
+      "annotations": {},
       "capabilities": {
         "effects": [
           "write:report-store"
@@ -115,7 +202,7 @@
         "sensitivity": "synthetic report"
       },
       "description": "Write a report into the synthetic report store.",
-      "hash": "65ed596538088c4434b55c5887664c8d0f0f37f7c833d73a81294156c3f34f17",
+      "hash": "d87eb30a773a5f8425969786328d6ecad19d61e1084681c23b6a38a92ebc0ab7",
       "input": {
         "properties": {
           "body": "string",
@@ -126,7 +213,22 @@
           "report_id"
         ]
       },
-      "name": "write_report"
+      "name": "write_report",
+      "schema": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "report_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "body"
+        ],
+        "type": "object"
+      }
     }
   ]
 }

@@ -267,7 +267,7 @@ def test_seed_on_start_fills_the_benchmark_once(tmp_path, monkeypatch):
 
 def test_corpus_lists_the_fixed_split(client):
     rows = client.get("/api/corpus").json()
-    assert len(rows) == 21 and sum(r["kind"] == "control" for r in rows) == 11
+    assert len(rows) == 22 and sum(r["kind"] == "control" for r in rows) == 11
     assert {r["split"] for r in rows} == {"development", "held_out"}
     assert next(r for r in rows if r["id"] == "document_injection")["split"] == "development"
 

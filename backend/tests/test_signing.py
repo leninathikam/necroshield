@@ -256,3 +256,31 @@ def test_keygen_and_sign_cli_round_trip(crypto, tmp_path, good_bundle):
     refused = subprocess.run([sys.executable, "-m", "necroshield", "sign", str(src), "--key-file", str(key), "--out",
                               str(tmp_path / "x.json")], cwd=backend, capture_output=True, text=True)
     assert refused.returncode == 1 and "refusing to sign evidence that failed verification" in refused.stderr
+
+
+def test_small_order_keys_and_nonces_are_refused(verifier):
+    identity = (1).to_bytes(32, "little")          # the neutral element: every signature "verifies" under it
+    order_two = ((verifier._P - 1) | 0).to_bytes(32, "little")  # y = -1
+    forged = identity + bytes(32)
+    assert not verifier.ed25519_verify(identity, b"anything", forged)
+    assert not verifier.ed25519_verify(order_two, b"anything", order_two + bytes(32))
+    for bad in (identity.hex(), order_two.hex()):
+        with pytest.raises(verifier.Malformed, match="small order|not a valid"):
+            verifier.parse_public_key(bad)
+    good = RFC8032[1][2]
+    assert verifier.parse_public_key(good) == bytes.fromhex(good)
+    pub, msg, sig = (bytes.fromhex(x) for x in (RFC8032[1][2], RFC8032[1][1], RFC8032[1][3]))
+    assert not verifier.ed25519_verify(pub, msg, identity + sig[32:])  # a small-order R is refused too
+
+
+def test_cli_applies_digest_flags_to_signed_files_and_does_not_claim_otherwise(keys, tmp_path):
+    trusted, _ = keys
+    pair = json.loads(json.dumps(run_pair(REGISTRY["memory_poisoning"]).export()))
+    signed = trusted.sign(pair)
+    s = REGISTRY["memory_poisoning"]
+    good = _cli(tmp_path, signed, "--public-key", trusted.public.hex(), "--scenario-digest", s.digest(), "--policy-digest", s.policy.digest())
+    assert good.returncode == 0 and "digests pinned" in good.stdout and "digests NOT pinned" not in good.stdout
+    wrong = _cli(tmp_path, signed, "--public-key", trusted.public.hex(), "--scenario-digest", "0" * 64, "--policy-digest", "1" * 64)
+    assert wrong.returncode == 1 and "differs from the pinned value" in wrong.stdout
+    unpinned = _cli(tmp_path, signed, "--public-key", trusted.public.hex())
+    assert unpinned.returncode == 0 and "digests NOT pinned" in unpinned.stdout

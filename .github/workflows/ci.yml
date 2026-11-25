@@ -189,7 +189,10 @@ jobs:
         run: python3 .github/scripts/container_smoke.py http://127.0.0.1:10000
       - name: peak memory stays under the Render Free limit after the judge flow
         run: |
-          for i in 1 2 3; do curl -sf http://127.0.0.1:10000/api/evolution >/dev/null; done
+          for v in 0 1 2 3 4 5 6; do curl -sf "http://127.0.0.1:10000/api/evolution?variants=$v" >/dev/null; done
+          for id in $(curl -sf http://127.0.0.1:10000/api/corpus | python3 -c "import json,sys; print(' '.join(r['id'] for r in json.load(sys.stdin) if r['kind']=='attack'))"); do
+            curl -sf "http://127.0.0.1:10000/api/theatre/$id" >/dev/null
+          done
           peak_kb=$(docker exec ns grep VmHWM /proc/1/status | awk '{print $2}')
           echo "peak resident memory: $((peak_kb / 1024)) MB (limit 512 MB)"
           test "$peak_kb" -lt 524288

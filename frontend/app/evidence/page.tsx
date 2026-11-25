@@ -50,7 +50,8 @@ function UploadVerifier() {
         <div className="stack" style={{ marginTop: 12 }}>
           <p className="dim">
             This file is signed. Paste the public key you trust (hex or base64), obtained from the publisher by a channel other
-            than this file. A signature is never checked against a key taken from the file itself.
+            than this file. A signature is never checked against a key taken from the file itself. This page asks this server to
+            check it; for a check that does not rely on this server, run <code>python scripts/verify_evidence.py FILE --public-key KEY</code>.
           </p>
           <label>
             Trusted public key

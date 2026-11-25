@@ -225,12 +225,16 @@ export interface StrategyRow {
   development: PolicyScore;
   held_out: PolicyScore;
   variants: { development: PolicyScore; held_out: PolicyScore };
-  transfer: { development: Rate; held_out: Rate };
+  transfer: { development: Rate; held_out: Rate; unit: string; by_construction: boolean };
+  generalisation_test: boolean;
+  held_out_basis: string;
+  held_out_leaks: string[];
 }
 
 export interface ArmRow {
   arm: string;
   policy: string;
+  basis?: string;
   score: PolicyScore;
 }
 
@@ -243,12 +247,15 @@ export interface Evolution {
     development: { scenarios: number; attacks: number; controls: number };
     held_out: { scenarios: number; attacks: number; controls: number };
     variants_per_attack: number;
+    variant_counts: Record<string, number>;
+    attacks_without_variants: string[];
     note: string;
   };
   evaluation_mode: string;
   objectives: string;
   selection_rule: string;
   selected: string | null;
+  selected_held_out_leaks: string[];
   strategies: StrategyRow[];
   arms: { development: ArmRow[]; held_out: ArmRow[] };
   caveats: string[];
