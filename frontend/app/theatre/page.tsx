@@ -130,7 +130,7 @@ export default function TheatrePage() {
       if (mine !== generation.current) return;
       setData(t);
       setChosen(t.selected ?? t.candidates[0]?.name ?? "");
-      setRevealed(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? STAGES.length - 1 : 1);
+      setRevealed(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? STAGES.length : 1);
     } catch (e) {
       if (mine === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -139,7 +139,7 @@ export default function TheatrePage() {
   }
 
   useEffect(() => {
-    if (!data || revealed === 0 || revealed >= STAGES.length - 1) return;
+    if (!data || revealed === 0 || revealed >= STAGES.length) return;
     const timer = window.setTimeout(() => setRevealed((n) => n + 1), 900);
     return () => window.clearTimeout(timer);
   }, [data, revealed]);

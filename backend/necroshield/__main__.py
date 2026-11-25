@@ -4,6 +4,8 @@
   python -m necroshield run SCENARIO [--db PATH] [--export FILE]
   python -m necroshield benchmark [--db PATH]          run every scenario once and print the table
   python -m necroshield evolve [--variants N] [--out FILE]   closed-loop policy evaluation (keyless)
+  python -m necroshield keygen --out KEYFILE            create an Ed25519 signing key (prints the public key)
+  python -m necroshield sign FILE --key-file KEYFILE --out SIGNED.json   sign a verified export or bundle
   python -m necroshield reset-store --db PATH --yes    delete all stored runs (demo reset)
   python -m necroshield live --out DIR [...]           operator-only live-model experiment (paid; budgeted)
 """
@@ -112,6 +114,34 @@ def _evolve(variants: int, out: str | None) -> int:
             handle.close()
 
 
+def _keygen(out: str) -> int:
+    from .signing import generate_keypair, write_key_file
+
+    seed, public = generate_keypair()
+    write_key_file(out, seed)  # exclusive create, mode 0600
+    print(f"private key written to {out} (keep it out of the repository and off the web server's public paths)")
+    print(f"public key (hex, give this to verifiers): {public}")
+    return 0
+
+
+def _sign(path: str, key_file: str, out: str) -> int:
+    from pathlib import Path
+
+    from .signing import signer_from_seed_b64
+    from .verification import verify_export
+
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    problems = verify_export(document)
+    if problems:
+        print("refusing to sign evidence that failed verification:", *problems, sep="\n  - ", file=sys.stderr)
+        return 1
+    signed = signer_from_seed_b64(Path(key_file).read_text()).sign(document)
+    with open(out, "x", encoding="utf-8") as handle:  # never overwrite
+        json.dump(signed, handle, indent=2)
+    print(f"signed {path} -> {out} (key {signed['signature']['key_id']})")
+    return 0
+
+
 def _reset(db: str) -> None:
     store = RunStore(db)
     try:
@@ -180,6 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("scenario", choices=sorted(REGISTRY))
     run.add_argument("--db", default="necroshield.db")
     run.add_argument("--export", help="write the pair export to this new JSON file")
+    keygen = sub.add_parser("keygen", help="create an Ed25519 signing key file")
+    keygen.add_argument("--out", required=True)
+    sign = sub.add_parser("sign", help="sign a verified export or bundle")
+    sign.add_argument("file")
+    sign.add_argument("--key-file", required=True)
+    sign.add_argument("--out", required=True)
     evo = sub.add_parser("evolve", help="closed-loop policy evaluation over the corpus (keyless)")
     evo.add_argument("--variants", type=int, default=3, choices=range(0, 7))
     evo.add_argument("--out", help="write the full results to this new JSON file")
@@ -198,6 +234,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "live":
         return _live(args)
+    if args.command in ("keygen", "sign"):
+        try:
+            return _keygen(args.out) if args.command == "keygen" else _sign(args.file, args.key_file, args.out)
+        except FileExistsError:
+            print(f"refusing to overwrite existing file: {args.out}", file=sys.stderr)
+            return 1
     if args.command == "evolve":
         try:
             return _evolve(args.variants, args.out)

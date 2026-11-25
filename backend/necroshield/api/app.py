@@ -28,12 +28,13 @@ from ..mcp_server import replay_over_mcp
 from ..optimizer import candidate_policy, evolve, theatre
 from ..metrics import BUNDLE_FORMAT, summarize
 from ..runner import decisive_denials, run_pair
+from ..signing import Signer, SigningUnavailable, load_signer
 from ..scenarios import Policy, Scenario
 from ..storage import RunStore, StorageFull, StoredPair
 from ..tools import TOOLS
-from ..verification import verify_export
+from ..verification import verifier, verify_export
 from .guards import Guards, RateLimiter
-from .schemas import ApproveRequest, LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest
+from .schemas import ApproveRequest, LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest, VerifySignedRequest
 
 MAX_BODY = 256 * 1024
 MIN_OPERATOR_TOKEN = 32
@@ -97,6 +98,11 @@ def _detail(stored: StoredPair) -> dict[str, Any]:
             "analysis": stored.analysis if stored.verified else [], "export": stored.export}
 
 
+def _is_bundle(document: Any) -> bool:
+    payload = document.get("payload") if isinstance(document, dict) else None
+    return isinstance(payload, dict) and payload.get("format") == BUNDLE_FORMAT
+
+
 def _current_pins() -> dict[str, dict[str, str]]:
     return {s.scenario_id: {"scenario_digest": s.digest(), "policy_digest": s.policy.digest()} for s in REGISTRY.values()}
 
@@ -142,6 +148,12 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
     async def too_deep(_request: Request, _exc: RecursionError) -> JSONResponse:
         return JSONResponse({"detail": "document is nested too deeply"}, status_code=400)
     scenario_views = [_scenario_view(s) for s in REGISTRY.values()]  # immutable definitions: build once
+    signer: Signer | None = None
+    try:
+        signer = load_signer()
+    except (ValueError, SigningUnavailable) as exc:
+        log.warning("evidence signing disabled: %s", exc)  # fail closed: an unusable key never half-works
+
     live_budget = {"remaining": _env_int("NECROSHIELD_LIVE_MAX_RUNS", 30)}
     live_lock = threading.Lock()
     operator_token = os.environ.get("NECROSHIELD_LIVE_OPERATOR_TOKEN", "")
@@ -241,14 +253,40 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
         except KeyError:
             raise HTTPException(404, "unknown pair") from None
 
+    @app.get("/api/signing")
+    def signing_status() -> dict[str, Any]:
+        """Public information only. Whether to trust this key is decided out of band."""
+        return signer.describe() if signer else {"enabled": False, "reason": "no signing key is configured on this server"}
+
+    def _signed_or_409(payload: Any) -> dict[str, Any]:
+        if signer is None:
+            raise HTTPException(409, "signing is not configured on this server")
+        return signer.sign(payload)
+
     @app.get("/api/runs/{pair_id}/export")
-    def export_run(pair_id: str) -> JSONResponse:
+    def export_run(pair_id: str, signed: bool = False) -> JSONResponse:
         try:
             stored = store.load(pair_id)
         except KeyError:
             raise HTTPException(404, "unknown pair") from None
-        return JSONResponse(stored.export, headers={
-            "content-disposition": f'attachment; filename="necroshield-{pair_id}.json"'})
+        body: Any = stored.export
+        if signed:
+            if not stored.verified:
+                raise HTTPException(409, "refusing to sign evidence that failed verification")
+            body = _signed_or_409(stored.export)
+        return JSONResponse(body, headers={
+            "content-disposition": f'attachment; filename="necroshield-{pair_id}{"-signed" if signed else ""}.json"'})
+
+    @app.post("/api/verify-signed")
+    def verify_signed(request: VerifySignedRequest) -> dict[str, Any]:
+        """Check a signed document against a public key the CALLER supplies and trusts."""
+        v = verifier()
+        try:
+            key = v.parse_public_key(request.public_key)
+        except v.Malformed as exc:
+            raise HTTPException(422, str(exc)) from None
+        problems = v.verify_signed(request.document, key, _current_pins() if _is_bundle(request.document) else None)
+        return {"verified": not problems, "problems": problems}
 
     @app.post("/api/verify")
     def verify(export: Any = Body(...)) -> dict[str, Any]:
@@ -283,14 +321,17 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
         return _benchmark()
 
     @app.get("/api/benchmark/bundle")
-    def bundle() -> JSONResponse:
+    def bundle(signed: bool = False) -> JSONResponse:
         current = {s.scenario_id: (s.digest(), s.policy.digest()) for s in REGISTRY.values()}
         verified = [p for p in store.latest_default_per_scenario(current) if p.verified]
         if not verified:
             raise HTTPException(409, "no verified benchmark runs yet")
         exports = [p.export for p in verified]
-        body = {"format": BUNDLE_FORMAT, "summary": summarize(exports), "pairs": exports}
-        return JSONResponse(body, headers={"content-disposition": 'attachment; filename="necroshield-benchmark.json"'})
+        body: Any = {"format": BUNDLE_FORMAT, "summary": summarize(exports), "pairs": exports}
+        if signed:
+            body = _signed_or_409(body)
+        return JSONResponse(body, headers={
+            "content-disposition": f'attachment; filename="necroshield-benchmark{"-signed" if signed else ""}.json"'})
 
     @app.post("/api/mcp/replay")
     async def mcp_replay(request: McpDemoRequest) -> dict[str, Any]:

@@ -28,6 +28,7 @@ Limits
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import posixpath
@@ -529,11 +530,132 @@ def verify_any(document: Any, scenario_digest: str | None = None, policy_digest:
     return verify(document, scenario_digest, policy_digest)
 
 
+# --- Ed25519 (RFC 8032) verification, pure Python ------------------------------------------------
+# Verification touches only public data, so a variable-time implementation is acceptable here. Signing
+# is done elsewhere with a constant-time library; this module can only verify.
+
+_P = 2**255 - 19
+_Q = 2**252 + 27742317777372353535851937790883648493
+_D = -121665 * pow(121666, _P - 2, _P) % _P
+_I = pow(2, (_P - 1) // 4, _P)
+
+
+def _recover_x(y: int, sign: int) -> int | None:
+    if y >= _P:
+        return None
+    x2 = (y * y - 1) * pow(_D * y * y + 1, _P - 2, _P) % _P
+    if x2 == 0:
+        return None if sign else 0
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P:
+        x = x * _I % _P
+    if (x * x - x2) % _P:
+        return None
+    return _P - x if (x & 1) != sign else x
+
+
+def _add(a: tuple, b: tuple) -> tuple:
+    (x1, y1, z1, t1), (x2, y2, z2, t2) = a, b
+    A, B = (y1 - x1) * (y2 - x2) % _P, (y1 + x1) * (y2 + x2) % _P
+    C, D = 2 * t1 * t2 * _D % _P, 2 * z1 * z2 % _P
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return E * F % _P, G * H % _P, F * G % _P, E * H % _P
+
+
+def _mul(s: int, point: tuple) -> tuple:
+    result = (0, 1, 1, 0)
+    while s:
+        if s & 1:
+            result = _add(result, point)
+        point = _add(point, point)
+        s >>= 1
+    return result
+
+
+def _equal(a: tuple, b: tuple) -> bool:
+    return (a[0] * b[2] - b[0] * a[2]) % _P == 0 and (a[1] * b[2] - b[1] * a[2]) % _P == 0
+
+
+def _decompress(data: bytes) -> tuple | None:
+    y = int.from_bytes(data, "little")
+    x = _recover_x(y & ((1 << 255) - 1), y >> 255)
+    return None if x is None else (x, y & ((1 << 255) - 1), 1, x * (y & ((1 << 255) - 1)) % _P)
+
+
+_GY = 4 * pow(5, _P - 2, _P) % _P
+_GX = _recover_x(_GY, 0)
+_G = (_GX, _GY, 1, _GX * _GY % _P)
+
+
+def ed25519_verify(public: bytes, message: bytes, signature: bytes) -> bool:
+    """RFC 8032 verification. Rejects wrong lengths, non-canonical S, and points that do not decode."""
+    if len(public) != 32 or len(signature) != 64:
+        return False
+    a_point, r_point = _decompress(public), _decompress(signature[:32])
+    s = int.from_bytes(signature[32:], "little")
+    if a_point is None or r_point is None or s >= _Q:
+        return False
+    h = int.from_bytes(hashlib.sha512(signature[:32] + public + message).digest(), "little") % _Q
+    return _equal(_mul(s, _G), _add(r_point, _mul(h, a_point)))
+
+
+# --- signed documents ---------------------------------------------------------------------------
+
+SIGNED_FORMAT = "necroshield.signed/1"
+
+
+def signed_message(key_id: str, signed_at: str, payload: Any) -> bytes:
+    """The exact bytes that are signed: the payload's canonical hash bound to the key and claimed time."""
+    return canonical({"format": SIGNED_FORMAT, "key_id": key_id, "signed_at": signed_at,
+                      "payload_sha256": sha256(canonical(payload))}).encode()
+
+
+def parse_public_key(text: str) -> bytes:
+    text = text.strip()
+    try:
+        raw = bytes.fromhex(text) if len(text) == 64 else base64.b64decode(text, validate=True)
+    except ValueError:
+        raise Malformed("public key must be 32 bytes as hex or base64") from None
+    if len(raw) != 32:
+        raise Malformed("public key must be 32 bytes")
+    return raw
+
+
+def verify_signed(document: Any, public_key: bytes, pins: dict | None = None) -> list[str]:
+    """Check the signature against a TRUSTED public key, then verify the payload itself."""
+    problems: list[str] = []
+    try:
+        _need(document, dict, "signed document")
+        if set(document) != {"format", "payload", "signature"} or document["format"] != SIGNED_FORMAT:
+            return ["not a necroshield.signed/1 document"]
+        signature = _need(document["signature"], dict, "signature")
+        if set(signature) != {"alg", "key_id", "signed_at", "sig"} or signature["alg"] != "ed25519":
+            return ["signature must have exactly alg (ed25519), key_id, signed_at, sig"]
+        for key in ("key_id", "signed_at", "sig"):
+            _need(signature[key], str, f"signature.{key}")
+        if signature["key_id"] != hashlib.sha256(public_key).hexdigest()[:16]:
+            return ["signature was made by a different key than the trusted public key"]
+        try:
+            raw_sig = base64.b64decode(signature["sig"], validate=True)
+        except ValueError:
+            return ["signature is not valid base64"]
+        if not ed25519_verify(public_key, signed_message(signature["key_id"], signature["signed_at"], document["payload"]), raw_sig):
+            return ["signature does not match the payload"]
+        problems += [f"payload: {p}" for p in verify_any(document["payload"], pins=pins)]
+    except Malformed as exc:
+        problems.append(f"malformed signed document: {exc}")
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        problems.append(f"malformed signed document: {type(exc).__name__}: {exc}")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("export")
     parser.add_argument("--scenario-digest", help="expected scenario digest for a single pair export")
     parser.add_argument("--policy-digest", help="expected policy digest for a single pair export")
+    parser.add_argument("--public-key", help="trusted Ed25519 public key (hex or base64). Required for signed files; "
+                                            "when given, an unsigned file is rejected")
     parser.add_argument("--pins", help="JSON file mapping scenario id to {scenario_digest, policy_digest}; "
                                       "for bundles it also fixes the expected scenario set")
     args = parser.parse_args(argv)
@@ -543,13 +665,33 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"FAIL: cannot read input: {exc}")
         return 1
-    problems = verify_any(export, args.scenario_digest, args.policy_digest, pins)
+    trusted = None
+    if args.public_key:
+        try:
+            candidate = Path(args.public_key)
+            trusted = parse_public_key(candidate.read_text() if candidate.is_file() else args.public_key)
+        except (Malformed, OSError) as exc:
+            print(f"FAIL: {exc}")
+            return 1
+    is_signed = isinstance(export, dict) and export.get("format") == SIGNED_FORMAT
+    if is_signed and trusted is None:
+        problems = ["file is signed: supply the trusted public key with --public-key (a signature is not checked "
+                    "against a key taken from the file itself)"]
+    elif trusted is not None and not is_signed:
+        problems = ["a trusted public key was given, but the file carries no signature"]
+    elif is_signed:
+        problems = verify_signed(export, trusted, pins)
+        export = export["payload"] if not problems else export
+    else:
+        problems = verify_any(export, args.scenario_digest, args.policy_digest, pins)
     if problems:
         print("FAIL")
         for problem in problems:
             print(f"  - {problem}")
         return 1
     pinned = " (digests pinned)" if pins or (args.scenario_digest and args.policy_digest) else " (digests NOT pinned)"
+    if trusted is not None:
+        pinned += " (signature valid for the trusted key)"
     if export.get("format") == BUNDLE_FORMAT:
         print(f"OK: benchmark bundle verified, {len(export['pairs'])} pairs, summary recomputed{pinned}")
     elif export.get("format") == LIVE_FORMAT:

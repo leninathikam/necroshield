@@ -311,3 +311,65 @@ def test_approve_is_rate_limited_like_other_writes(tmp_path, monkeypatch):
     with TestClient(app) as c:
         codes = [c.post("/api/theatre/document_injection/approve", json={"strategy": "scoped_trace"}).status_code for _ in range(3)]
     assert codes == [201, 201, 429]
+
+
+@pytest.fixture
+def signing_app(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    from necroshield.signing import generate_keypair
+    seed, public = generate_keypair()
+    monkeypatch.setenv("NECROSHIELD_SIGNING_KEY", seed)
+    app = create_app(str(tmp_path / "sig.db"), allowed_origins={ORIGIN})
+    with TestClient(app, headers={"origin": ORIGIN}) as c:
+        yield c, seed, public
+
+
+def test_signing_is_off_by_default_and_says_so(client):
+    assert client.get("/api/signing").json()["enabled"] is False
+    client.post("/api/benchmark")
+    assert client.get("/api/benchmark/bundle?signed=true").status_code == 409
+
+
+def test_signed_bundle_and_pair_verify_with_the_published_key_and_never_leak_the_private_key(signing_app):
+    c, seed, public = signing_app
+    info = c.get("/api/signing").json()
+    assert info["enabled"] and info["public_key"] == public and seed not in json.dumps(info)
+    c.post("/api/benchmark")
+    signed_bundle = c.get("/api/benchmark/bundle?signed=true")
+    assert signed_bundle.status_code == 200 and seed not in signed_bundle.text
+    result = c.post("/api/verify-signed", json={"document": signed_bundle.json(), "public_key": public}).json()
+    assert result == {"verified": True, "problems": []}
+    pair = c.post("/api/runs", json={"scenario_id": "benign_invoice"}).json()["summary"]["pair_id"]
+    signed_pair = c.get(f"/api/runs/{pair}/export?signed=true").json()
+    assert c.post("/api/verify-signed", json={"document": signed_pair, "public_key": public}).json()["verified"] is True
+
+
+def test_wrong_key_and_tampering_are_rejected_by_the_endpoint(signing_app):
+    from necroshield.signing import generate_keypair
+    c, _, public = signing_app
+    c.post("/api/benchmark")
+    doc = c.get("/api/benchmark/bundle?signed=true").json()
+    other = generate_keypair()[1]
+    assert not c.post("/api/verify-signed", json={"document": doc, "public_key": other}).json()["verified"]
+    doc["payload"]["summary"]["scenarios"] = 99
+    assert c.post("/api/verify-signed", json={"document": doc, "public_key": public}).json()["problems"] == [
+        "signature does not match the payload"]
+    assert c.post("/api/verify-signed", json={"document": doc, "public_key": "zz" * 32}).status_code == 422
+
+
+def test_unverified_evidence_is_never_signed(signing_app):
+    import sqlite3
+    c, _, _ = signing_app
+    pair = c.post("/api/runs", json={"scenario_id": "benign_invoice"}).json()["summary"]["pair_id"]
+    db = c.app.state.store._db
+    db.execute("DROP TRIGGER pairs_no_update")
+    db.execute("UPDATE pairs SET export_json = '{}'")
+    db.commit()
+    assert c.get(f"/api/runs/{pair}/export?signed=true").status_code == 409
+
+
+def test_an_unusable_signing_key_disables_signing_instead_of_half_working(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    monkeypatch.setenv("NECROSHIELD_SIGNING_KEY", "not-a-key")
+    with TestClient(create_app(str(tmp_path / "bad.db"), allowed_origins={ORIGIN})) as c:
+        assert c.get("/api/signing").json()["enabled"] is False

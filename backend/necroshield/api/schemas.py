@@ -3,7 +3,7 @@ validated types, which fail closed on anything the core does not accept."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +37,11 @@ class RunRequest(Strict):
 
 class ApproveRequest(Strict):
     strategy: str = Field(pattern=r"^[a-z_]{1,32}$")
+
+
+class VerifySignedRequest(Strict):
+    document: dict[str, Any]
+    public_key: str = Field(min_length=44, max_length=64)
 
 
 class McpDemoRequest(Strict):

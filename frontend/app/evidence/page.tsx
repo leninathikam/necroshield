@@ -11,13 +11,29 @@ const MAX_UPLOAD = 256 * 1024;
 function UploadVerifier() {
   const [result, setResult] = useState<Verification | null>(null);
   const [error, setError] = useState("");
+  const [signed, setSigned] = useState<unknown>(null);
+  const [key, setKey] = useState("");
   async function onFile(file: File | undefined) {
     setResult(null);
     setError("");
+    setSigned(null);
     if (!file) return;
     if (file.size > MAX_UPLOAD) return setError("file is larger than 256 KB");
     try {
-      setResult(await api.verify(JSON.parse(await file.text())));
+      const document: unknown = JSON.parse(await file.text());
+      if (typeof document === "object" && document !== null && (document as { format?: string }).format === "necroshield.signed/1") {
+        setSigned(document); // a signature is only meaningful against a key the user trusts
+        return;
+      }
+      setResult(await api.verify(document));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  async function checkSigned() {
+    setError("");
+    try {
+      setResult(await api.verifySigned(signed, key.trim()));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -30,6 +46,19 @@ function UploadVerifier() {
         <code>python scripts/verify_evidence.py FILE</code>.
       </p>
       <input type="file" accept="application/json,.json" aria-label="Evidence file" onChange={(e) => onFile(e.target.files?.[0])} />
+      {signed !== null && (
+        <div className="stack" style={{ marginTop: 12 }}>
+          <p className="dim">
+            This file is signed. Paste the public key you trust (hex or base64), obtained from the publisher by a channel other
+            than this file. A signature is never checked against a key taken from the file itself.
+          </p>
+          <label>
+            Trusted public key
+            <input value={key} onChange={(e) => setKey(e.target.value)} aria-label="Trusted public key" spellCheck={false} />
+          </label>
+          <p><button className="btn btn-primary" onClick={checkSigned} disabled={key.trim().length < 44}>Check signature and evidence</button></p>
+        </div>
+      )}
       {error && <p role="alert" className="state-error" style={{ marginTop: 10 }}>{error}</p>}
       {result && (
         <div style={{ marginTop: 12 }} role="status">

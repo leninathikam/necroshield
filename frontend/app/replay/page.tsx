@@ -4,8 +4,11 @@ import Link from "next/link";
 import { Attributions, RunCompare } from "@/components/RunCompare";
 import { RunPage } from "@/components/RunPage";
 import { api } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 export default function ReplayPage() {
+  const [signing] = useApi((s) => api.signing(s), []);
+  const canSign = signing.state === "ready" && signing.data.enabled;
   return (
     <RunPage
       title="Replay Lab"
@@ -25,6 +28,11 @@ export default function ReplayPage() {
             <a className="btn" href={api.exportUrl(d.summary.pair_id)} download>
               Download evidence (JSON)
             </a>
+            {canSign && (
+              <a className="btn" href={api.signedExportUrl(d.summary.pair_id)} download>
+                Download signed receipt
+              </a>
+            )}
             <Link className="btn" href={`/policy/?scenario=${d.export.scenario.id}`}>Modify the policy and re-run</Link>
             <Link className="btn" href={`/graph/?pair=${d.summary.pair_id}`}>Open the execution graph</Link>
             <Link className="btn" href={`/evidence/?pair=${d.summary.pair_id}`}>Inspect the event chain</Link>

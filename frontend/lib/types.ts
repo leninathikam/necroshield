@@ -293,3 +293,11 @@ export interface Theatre {
   approval: string;
   evaluation_mode: string;
 }
+
+export interface SigningInfo {
+  enabled: boolean;
+  alg?: string;
+  key_id?: string;
+  public_key?: string;
+  reason?: string;
+}

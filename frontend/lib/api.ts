@@ -9,6 +9,7 @@ import type {
   RunDetail,
   RunSummary,
   ScenarioView,
+  SigningInfo,
   Theatre,
   ToolSpecView,
   Verification,
@@ -63,6 +64,10 @@ export const api = {
   approve: (scenarioId: string, strategy: string) =>
     post<RunDetail>(`/api/theatre/${encodeURIComponent(scenarioId)}/approve`, { strategy }),
   evolutionUrl: "/api/evolution?variants=3",
+  signing: (signal?: AbortSignal) => request<SigningInfo>("/api/signing", { signal }),
+  verifySigned: (document: unknown, publicKey: string) => post<Verification>("/api/verify-signed", { document, public_key: publicKey }),
+  signedExportUrl: (pairId: string) => `/api/runs/${encodeURIComponent(pairId)}/export?signed=true`,
+  signedBundleUrl: "/api/benchmark/bundle?signed=true",
   exportUrl: (pairId: string) => `/api/runs/${encodeURIComponent(pairId)}/export`,
   bundleUrl: "/api/benchmark/bundle",
 };
