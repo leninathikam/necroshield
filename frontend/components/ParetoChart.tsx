@@ -19,12 +19,25 @@ export function ParetoChart({ points, caption }: { points: ParetoPoint[]; captio
   const py = (y: number) => H - PAD.b - y * (H - PAD.t - PAD.b);
   // Points with identical coordinates are fanned out so none hides another.
   const seen = new Map<string, number>();
-  const placed = points.map((p) => {
+  const fanned = points.map((p) => {
     const key = `${p.x.toFixed(2)}:${p.y.toFixed(3)}`;
     const n = seen.get(key) ?? 0;
     seen.set(key, n + 1);
     return { ...p, dx: n * 11, dy: -n * 9 };
   });
+  // Labels are stacked in levels so neighbouring names never print over each other.
+  const order = [...fanned].sort((a, b) => px(a.x) + a.dx - (px(b.x) + b.dx));
+  const level = new Map<string, number>();
+  const lastEnd: number[] = [];
+  for (const p of order) {
+    const start = px(p.x) + p.dx + 10;
+    const width = p.name.length * 6.4;
+    let l = 0;
+    while ((lastEnd[l] ?? -Infinity) > start - 4 && l < 5) l++;
+    lastEnd[l] = start + width;
+    level.set(p.name, l);
+  }
+  const placed = fanned.map((p) => ({ ...p, row: level.get(p.name) ?? 0 }));
   return (
     <figure style={{ margin: 0 }}>
       <svg viewBox={`0 0 ${W} ${H}`} className="pareto" role="img" aria-label={caption}>
@@ -57,7 +70,7 @@ export function ParetoChart({ points, caption }: { points: ParetoPoint[]; captio
               ) : (
                 <path d={`M${cx - 5} ${cy - 5}L${cx + 5} ${cy + 5}M${cx + 5} ${cy - 5}L${cx - 5} ${cy + 5}`} className="pareto-rejected" />
               )}
-              <text x={cx + 10} y={cy - 8} className="pareto-label">
+              <text x={Math.min(cx + 10, W - PAD.r - p.name.length * 6.4)} y={cy - 8 - p.row * 12} className="pareto-label">
                 {p.name}
               </text>
             </g>

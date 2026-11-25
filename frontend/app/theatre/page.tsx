@@ -28,7 +28,6 @@ function CandidateTable({ candidates, chosen, onChoose }: { candidates: Candidat
             <th>Tasks completed</th>
             <th>Legit calls denied</th>
             <th>Complexity</th>
-            <th>Verdict</th>
           </tr>
         </thead>
         <tbody>
@@ -39,15 +38,6 @@ function CandidateTable({ candidates, chosen, onChoose }: { candidates: Candidat
                   <input type="radio" name="candidate" checked={c.name === chosen} onChange={() => onChoose(c.name)} />
                   <code>{c.name}</code>
                 </label>
-                <div className="faint">{c.description}</div>
-              </td>
-              <td className="faint">{c.inputs}</td>
-              <td className="mono">{frac(c.score.forbidden_effects_prevented)}</td>
-              <td className="mono">{frac(c.score.transfer_prevented)}</td>
-              <td className="mono">{frac(c.score.task_completion)}</td>
-              <td className="mono">{frac(c.score.false_positive_calls)}</td>
-              <td className="mono">{c.score.complexity_mean}</td>
-              <td>
                 {!c.feasible ? (
                   <span className="chip chip-failed" title={c.rejection}>rejected</span>
                 ) : c.selected ? (
@@ -57,8 +47,15 @@ function CandidateTable({ candidates, chosen, onChoose }: { candidates: Candidat
                 ) : (
                   <span className="chip chip-neutral">dominated</span>
                 )}
-                {!c.feasible && <div className="faint">{c.rejection}</div>}
+                {!c.feasible && <div className="faint" style={{ color: "#ffb3b3" }}>{c.rejection}</div>}
+                <div className="faint" style={{ minWidth: 190 }}>{c.description}</div>
               </td>
+              <td className="faint">{c.inputs}</td>
+              <td className="mono">{frac(c.score.forbidden_effects_prevented)}</td>
+              <td className="mono">{frac(c.score.transfer_prevented)}</td>
+              <td className="mono">{frac(c.score.task_completion)}</td>
+              <td className="mono">{frac(c.score.false_positive_calls)}</td>
+              <td className="mono">{c.score.complexity_mean}</td>
             </tr>
           ))}
         </tbody>

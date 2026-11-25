@@ -34,7 +34,7 @@ function Strategies({ e }: { e: Evolution }) {
           <tr>
             <th rowSpan={2}>Strategy</th>
             <th colSpan={4}>Development ({e.corpus.development.scenarios})</th>
-            <th colSpan={4}>Held-out ({e.corpus.held_out.scenarios}); per-task rows are not generalisation tests</th>
+            <th colSpan={4}>Held-out ({e.corpus.held_out.scenarios})</th>
             <th rowSpan={2}>Complexity</th>
             <th rowSpan={2}>Verdict</th>
           </tr>
@@ -160,6 +160,10 @@ export default function LabPage() {
                 policies that depend only on the plan, so it informs only <code>violation_patch</code> and the global policies. <strong>legit denied</strong>: calls the trusted task needs that were refused. Objectives: {e.objectives}.
               </p>
               <Strategies e={e} />
+              <p className="faint" style={{ marginTop: 8 }}>
+                Held-out columns for the per-task strategies are not generalisation tests: each policy is compiled from the scenario&apos;s
+                own plan. Only the global strategies are fitted on development alone.
+              </p>
               <p className="faint" style={{ marginTop: 10 }}>{e.selection_rule}</p>
             </section>
 
