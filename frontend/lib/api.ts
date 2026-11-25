@@ -8,6 +8,8 @@ import type {
   PolicyDoc,
   RunDetail,
   RunSummary,
+  Inspection,
+  ManifestInfo,
   ScenarioView,
   SecurityPatch,
   SigningInfo,
@@ -65,6 +67,9 @@ export const api = {
   approve: (scenarioId: string, strategy: string) =>
     post<RunDetail>(`/api/theatre/${encodeURIComponent(scenarioId)}/approve`, { strategy }),
   evolutionUrl: "/api/evolution?variants=3",
+  manifest: (signal?: AbortSignal) => request<ManifestInfo>("/api/mcp/manifest", { signal }),
+  inspect: (drift: string | null, approveDigest?: string) =>
+    post<Inspection>("/api/mcp/inspect", { drift, ...(approveDigest ? { approve_digest: approveDigest } : {}) }),
   patch: (scenarioId: string, base: string, baseFrom?: string) =>
     request<SecurityPatch>(`/api/patch?scenario_id=${encodeURIComponent(scenarioId)}&base=${encodeURIComponent(base)}${
       baseFrom ? `&base_from=${encodeURIComponent(baseFrom)}` : ""

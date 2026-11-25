@@ -47,6 +47,13 @@ class VerifySignedRequest(Strict):
 class McpDemoRequest(Strict):
     scenario_id: str = ScenarioId
     mode: Literal["baseline", "protected"] = "protected"
+    drift: str | None = Field(default=None, pattern=r"^[a-z_]{1,32}$")
+    approve_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class McpInspectRequest(Strict):
+    drift: str | None = Field(default=None, pattern=r"^[a-z_]{1,32}$")
+    approve_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class LiveRunRequest(Strict):

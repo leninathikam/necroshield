@@ -24,7 +24,8 @@ from ..catalog import REGISTRY
 from ..corpus import CORPUS, DEVELOPMENT_IDS
 from ..evidence import redact
 from ..live import ProviderConfig, run_live
-from ..mcp_server import replay_over_mcp
+from ..manifest import DRIFT_EXAMPLES, MANIFEST_MUTATIONS, load_approved
+from ..mcp_server import ManifestDrift, inspect_manifest, replay_over_mcp
 from ..optimizer import candidate_policy, evolve, theatre
 from ..patches import compile_patch
 from ..metrics import BUNDLE_FORMAT, summarize
@@ -35,7 +36,7 @@ from ..storage import RunStore, StorageFull, StoredPair
 from ..tools import TOOLS
 from ..verification import verifier, verify_export
 from .guards import Guards, RateLimiter
-from .schemas import ApproveRequest, LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest, VerifySignedRequest
+from .schemas import ApproveRequest, LiveRunRequest, McpDemoRequest, McpInspectRequest, PolicyIn, RunRequest, VerifySignedRequest
 
 MAX_BODY = 256 * 1024
 MIN_OPERATOR_TOKEN = 32
@@ -357,9 +358,30 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
         return JSONResponse(body, headers={
             "content-disposition": f'attachment; filename="necroshield-benchmark{"-signed" if signed else ""}.json"'})
 
+    def _known_drift(name: str | None) -> None:
+        if name is not None and name not in DRIFT_EXAMPLES and name not in MANIFEST_MUTATIONS:
+            raise HTTPException(404, "unknown drift example")
+
+    @app.get("/api/mcp/manifest")
+    def mcp_manifest() -> dict[str, Any]:
+        """The approved manifest and the synthetic drift examples. Nothing external is contacted."""
+        return {"approved": load_approved(), "drift_examples": {**DRIFT_EXAMPLES, **{k: v[0] for k, v in MANIFEST_MUTATIONS.items()}}}
+
+    @app.post("/api/mcp/inspect")
+    async def mcp_inspect(request: McpInspectRequest) -> dict[str, Any]:
+        _known_drift(request.drift)
+        return await inspect_manifest(request.drift, request.approve_digest)
+
     @app.post("/api/mcp/replay")
     async def mcp_replay(request: McpDemoRequest) -> dict[str, Any]:
-        result = await replay_over_mcp(_scenario(request.scenario_id), request.mode == "protected")
+        _known_drift(request.drift)
+        if request.drift in MANIFEST_MUTATIONS:
+            raise HTTPException(422, "capability drift is manifest-level; use /api/mcp/inspect")
+        try:
+            result = await replay_over_mcp(_scenario(request.scenario_id), request.mode == "protected",
+                                           drift=request.drift, approve_digest=request.approve_digest)
+        except ManifestDrift as exc:
+            raise HTTPException(409, {"error": "tool manifest drift: activation refused, no tool was called", **exc.decision}) from None
         result["evidence"] = "transcript only: not hash-chained, not stored, and not verified"
         return result
 

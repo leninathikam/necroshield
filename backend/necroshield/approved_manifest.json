@@ -1,0 +1,132 @@
+{
+  "digest": "709cf1f72eac0d5e1663977a6a0d63eb11593ccbbbd1fca8ae9c1370a676c2c8",
+  "format": "necroshield.mcp-manifest/1",
+  "tools": [
+    {
+      "capabilities": {
+        "effects": [
+          "read:customer-record"
+        ],
+        "egress": "none",
+        "sensitivity": "synthetic personal data"
+      },
+      "description": "Retrieve one synthetic customer record.",
+      "hash": "8cf2d800584ccaec9af70478ca5142b4dc8600ba30ad0fb4dea7eb2f6af27ec2",
+      "input": {
+        "properties": {
+          "customer_id": "string"
+        },
+        "required": [
+          "customer_id"
+        ]
+      },
+      "name": "get_customer_record"
+    },
+    {
+      "capabilities": {
+        "effects": [
+          "read:document"
+        ],
+        "egress": "none",
+        "sensitivity": "synthetic document"
+      },
+      "description": "Read a synthetic document by path.",
+      "hash": "b8755bf29e79b001b89cf7c3932d3e1ed1e6c827a6ca8ee68877e4b0f83a9fc9",
+      "input": {
+        "properties": {
+          "path": "string"
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "name": "read_document"
+    },
+    {
+      "capabilities": {
+        "effects": [
+          "read:agent-memory"
+        ],
+        "egress": "none",
+        "sensitivity": "synthetic memory"
+      },
+      "description": "Read a value from synthetic agent memory.",
+      "hash": "212412fcd0fa7c9f79a2d1c5a09ff69940c65735df95661308c53ee6d3beae20",
+      "input": {
+        "properties": {
+          "key": "string"
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "name": "read_memory"
+    },
+    {
+      "capabilities": {
+        "effects": [
+          "write:in-memory-sink"
+        ],
+        "egress": "synthetic sink only (*.invalid)",
+        "sensitivity": "synthetic message"
+      },
+      "description": "Send a message to the in-memory synthetic sink (*.invalid only).",
+      "hash": "ef76c72857169949fd49963dbaf2e75c4ce87409ce12ab11d3ccdf9b0ad1f6de",
+      "input": {
+        "properties": {
+          "attach": "string?",
+          "body": "string?",
+          "to": "string"
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "name": "send_message"
+    },
+    {
+      "capabilities": {
+        "effects": [
+          "write:agent-memory"
+        ],
+        "egress": "none",
+        "sensitivity": "synthetic memory"
+      },
+      "description": "Write a value into synthetic agent memory.",
+      "hash": "0fa29728f5e8a95457a900bb8ec78a86f34aabdc8bfc275f90adca60bfdb9579",
+      "input": {
+        "properties": {
+          "key": "string",
+          "value": "string"
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "name": "write_memory"
+    },
+    {
+      "capabilities": {
+        "effects": [
+          "write:report-store"
+        ],
+        "egress": "none",
+        "sensitivity": "synthetic report"
+      },
+      "description": "Write a report into the synthetic report store.",
+      "hash": "65ed596538088c4434b55c5887664c8d0f0f37f7c833d73a81294156c3f34f17",
+      "input": {
+        "properties": {
+          "body": "string",
+          "report_id": "string"
+        },
+        "required": [
+          "body",
+          "report_id"
+        ]
+      },
+      "name": "write_report"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ const LINKS = [
   ["/graph/", "Execution Graph"],
   ["/replay/", "Replay Lab"],
   ["/policy/", "Policy Inspector"],
+  ["/trust/", "MCP Trust"],
   ["/evidence/", "Evidence Explorer"],
   ["/benchmark/", "Benchmark Studio"],
 ] as const;

@@ -16,7 +16,7 @@
   - _Requirements: R18_
 - [x] 8. Signed bundles and pure-Python verification
   - _Requirements: R21_
-- [ ] 9. MCP trust inspector
+- [x] 9. MCP trust inspector
   - _Requirements: R20_
 - [ ] 10. Information-flow labels and destination constraints
   - _Requirements: R19_

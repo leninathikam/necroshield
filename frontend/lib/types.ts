@@ -323,3 +323,40 @@ export interface SecurityPatch {
   explanation: string[];
   report_markdown: string;
 }
+
+export interface ManifestTool {
+  name: string;
+  description: string;
+  hash: string;
+  input: { properties: Record<string, string>; required: string[] };
+  capabilities: { effects: string[]; egress: string; sensitivity: string };
+}
+
+export interface Manifest {
+  digest: string;
+  tools: ManifestTool[];
+}
+
+export interface ManifestChange {
+  tool: string;
+  kind: string;
+  severity: "escalation" | "change" | "reduction";
+  summary: string;
+  diff?: string[];
+}
+
+export interface Inspection {
+  source: string;
+  drift: string | null;
+  approved_digest: string;
+  observed_digest: string;
+  activate: boolean;
+  status: string;
+  changes: ManifestChange[];
+  note: string;
+}
+
+export interface ManifestInfo {
+  approved: Manifest;
+  drift_examples: Record<string, string>;
+}

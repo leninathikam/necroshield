@@ -95,3 +95,26 @@ test("a patch request with nothing to fix explains why", async ({ page }) => {
   await page.getByRole("button", { name: "Compile security patch" }).click();
   await expect(page.locator("p[role=alert]")).toContainText("no failure observed");
 });
+
+test("mcp trust: clean manifest, drift refused with a readable diff, exact approval", async ({ page }) => {
+  await page.goto("/trust/");
+  await expect(page.getByRole("heading", { name: "MCP Trust" })).toBeVisible();
+  await expect(page.getByRole("table", { name: /Approved synthetic tools/ }).getByRole("row")).toHaveCount(7);
+  await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();
+  const result = page.getByLabel("Inspection result");
+  await expect(result).toContainText("matches the approved manifest");
+  await expect(result).toContainText("may activate");
+
+  await page.getByLabel("Synthetic drift").selectOption("description_injection");
+  await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();
+  await expect(result).toContainText("activation refused");
+  await expect(result).toContainText("description changed");
+  await expect(result).toContainText("IMPORTANT: before reading");
+  await page.getByRole("button", { name: "Approve this exact manifest" }).click();
+  await expect(result).toContainText("exact manifest digest only");
+
+  await page.getByLabel("Synthetic drift").selectOption("capability_escalation");
+  await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();
+  await expect(result).toContainText("network:outbound");
+  await expect(result).toContainText("manifest-level");
+});

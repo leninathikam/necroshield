@@ -392,3 +392,40 @@ def test_patch_endpoint_compiles_downloads_and_never_applies(client):
 ])
 def test_patch_endpoint_rejects_bad_requests(client, query, status):
     assert client.get("/api/patch?" + query).status_code == status
+
+
+def test_mcp_manifest_endpoint_lists_approved_tools_and_drift_examples(client):
+    body = client.get("/api/mcp/manifest").json()
+    assert len(body["approved"]["tools"]) == 6 and "capability_escalation" in body["drift_examples"]
+
+
+def test_inspect_clean_drift_and_exact_approval(client):
+    clean = client.post("/api/mcp/inspect", json={}).json()
+    assert clean["activate"] and clean["changes"] == [] and clean["source"].startswith("tools/list")
+    drift = client.post("/api/mcp/inspect", json={"drift": "schema_widened"}).json()
+    assert not drift["activate"] and any(c["kind"] == "argument_added" for c in drift["changes"])
+    approved = client.post("/api/mcp/inspect", json={"drift": "schema_widened", "approve_digest": drift["observed_digest"]}).json()
+    assert approved["activate"]
+    other = client.post("/api/mcp/inspect", json={"drift": "tool_added", "approve_digest": drift["observed_digest"]}).json()
+    assert not other["activate"]  # an approval never carries over to a different manifest
+
+
+def test_capability_drift_is_manifest_level(client):
+    body = client.post("/api/mcp/inspect", json={"drift": "capability_escalation"}).json()
+    assert not body["activate"] and "manifest-level" in body["source"]
+    assert client.post("/api/mcp/replay", json={"scenario_id": "document_injection", "drift": "capability_escalation"}).status_code == 422
+
+
+def test_replay_on_a_drifted_manifest_is_refused_before_any_tool_runs(client):
+    refused = client.post("/api/mcp/replay", json={"scenario_id": "document_injection", "drift": "description_injection"})
+    assert refused.status_code == 409
+    detail = refused.json()["detail"]
+    assert "no tool was called" in detail["error"] and detail["activate"] is False
+    ok = client.post("/api/mcp/replay", json={"scenario_id": "document_injection", "drift": "description_injection",
+                                              "approve_digest": detail["observed_digest"]})
+    assert ok.status_code == 200 and ok.json()["outcome"]["attack_succeeded"] is False
+
+
+@pytest.mark.parametrize("body", [{"drift": "nope"}, {"drift": "Bad Name"}, {"approve_digest": "xyz"}, {"extra": 1}])
+def test_inspect_rejects_bad_requests(client, body):
+    assert client.post("/api/mcp/inspect", json=body).status_code in (404, 422)
