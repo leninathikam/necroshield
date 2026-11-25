@@ -35,6 +35,10 @@ class RunRequest(Strict):
     policy: PolicyIn | None = None
 
 
+class ApproveRequest(Strict):
+    strategy: str = Field(pattern=r"^[a-z_]{1,32}$")
+
+
 class McpDemoRequest(Strict):
     scenario_id: str = ScenarioId
     mode: Literal["baseline", "protected"] = "protected"

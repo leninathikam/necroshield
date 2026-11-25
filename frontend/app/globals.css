@@ -173,3 +173,27 @@ tr:last-child td { border-bottom: 0; }
   .graph { height: 420px; }
   .inspector dl { grid-template-columns: 1fr; }
 }
+
+/* attack theatre and policy lab */
+.rail { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 14px; padding: 0; }
+.rail li { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-faint); font-size: 13px; transition: border-color 300ms, color 300ms; }
+.rail li.reached { color: var(--text); border-color: var(--violet-deep); }
+.rail li[aria-current="step"] { border-color: var(--amber); color: var(--amber); }
+.rail-n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--bg-raised); font-size: 12px; }
+.stage { animation: stage-in 380ms ease-out both; }
+.stage-attack { border-left: 3px solid var(--red); }
+@keyframes stage-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.row-chosen td { background: rgba(167, 139, 250, 0.07); }
+.radio-row { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.radio-row input { width: auto; accent-color: var(--violet); }
+caption { caption-side: top; }
+th[colspan], th[rowspan] { text-align: left; }
+
+.pareto { width: 100%; height: auto; background: var(--bg-sunken); border: 1px solid var(--line); border-radius: 8px; }
+.pareto-grid { stroke: var(--line); stroke-width: 1; }
+.pareto-tick, .pareto-axis { fill: var(--text-faint); font-size: 11px; }
+.pareto-label { fill: var(--text-dim); font-size: 11px; font-family: var(--mono); }
+.pareto-front { fill: var(--violet); stroke: #d8cbff; stroke-width: 1; }
+.pareto-dominated { fill: none; stroke: var(--violet); stroke-width: 2; }
+.pareto-rejected { stroke: var(--red); stroke-width: 2.5; fill: none; stroke-linecap: round; }
+.pareto-selected { fill: none; stroke: var(--amber); stroke-width: 2; }

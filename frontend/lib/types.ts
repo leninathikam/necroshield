@@ -186,3 +186,110 @@ export interface Verification {
   verified: boolean;
   problems: string[];
 }
+
+export interface CorpusRow {
+  id: string;
+  version: string;
+  kind: "attack" | "control";
+  title: string;
+  attack_class: string;
+  digest: string;
+  split: "development" | "held_out";
+}
+
+export interface PolicyScore {
+  scenarios: number;
+  attack_scenarios: number;
+  control_scenarios: number;
+  forbidden_effects_prevented: Rate;
+  task_completion: Rate;
+  false_positive_calls: Rate;
+  false_positive_scenarios: Rate;
+  control_false_positives: Rate;
+  denial_rate: Rate;
+  complexity_mean: number | null;
+  median_ms: number | null;
+  cost_usd: number | null;
+  transfer_prevented: Rate;
+}
+
+export interface StrategyRow {
+  name: string;
+  scope: "per-scenario" | "global";
+  inputs: string;
+  description: string;
+  feasible: boolean;
+  rejection: string;
+  on_frontier: boolean;
+  selected: boolean;
+  development: PolicyScore;
+  held_out: PolicyScore;
+  variants: { development: PolicyScore; held_out: PolicyScore };
+  transfer: { development: Rate; held_out: Rate };
+}
+
+export interface ArmRow {
+  arm: string;
+  policy: string;
+  score: PolicyScore;
+}
+
+export interface Evolution {
+  corpus: {
+    scenarios: number;
+    attack_scenarios: number;
+    control_scenarios: number;
+    attack_classes: number;
+    development: { scenarios: number; attacks: number; controls: number };
+    held_out: { scenarios: number; attacks: number; controls: number };
+    variants_per_attack: number;
+    note: string;
+  };
+  evaluation_mode: string;
+  objectives: string;
+  selection_rule: string;
+  selected: string | null;
+  strategies: StrategyRow[];
+  arms: { development: ArmRow[]; held_out: ArmRow[] };
+  caveats: string[];
+}
+
+export interface Candidate {
+  name: string;
+  description: string;
+  inputs: string;
+  policy: PolicyDoc & { digest: string };
+  feasible: boolean;
+  rejection: string;
+  on_frontier: boolean;
+  selected: boolean;
+  score: PolicyScore;
+  tested_on: { scenario: string; variants: string[] };
+}
+
+export interface Theatre {
+  scenario: {
+    id: string;
+    version: string;
+    title: string;
+    attack_class: string;
+    trusted_task: string;
+    attacker_surface: string;
+    digest: string;
+    peer_attacks: string[];
+  };
+  red_team: {
+    seeded_variants: string[];
+    axis: string;
+    baseline_attack_succeeded: boolean;
+    observed_effects: string[];
+    violating_calls: ToolCallDoc[];
+  };
+  candidates: Candidate[];
+  selected: string | null;
+  selection_rule: string;
+  objectives: string;
+  counterfactual: Attribution[];
+  approval: string;
+  evaluation_mode: string;
+}

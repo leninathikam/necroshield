@@ -3,6 +3,7 @@
   python -m necroshield scenarios                      list scenarios and the digests to pin
   python -m necroshield run SCENARIO [--db PATH] [--export FILE]
   python -m necroshield benchmark [--db PATH]          run every scenario once and print the table
+  python -m necroshield evolve [--variants N] [--out FILE]   closed-loop policy evaluation (keyless)
   python -m necroshield reset-store --db PATH --yes    delete all stored runs (demo reset)
   python -m necroshield live --out DIR [...]           operator-only live-model experiment (paid; budgeted)
 """
@@ -74,6 +75,43 @@ def _benchmark(db: str) -> None:
         store.close()
 
 
+def _evolve(variants: int, out: str | None) -> int:
+    from .optimizer import evolve
+
+    handle = open(out, "x", encoding="utf-8") if out else None  # never overwrite earlier results
+    try:
+        result = evolve(variants)
+        c = result["corpus"]
+        print(f"corpus: {c['scenarios']} scenarios ({c['attack_scenarios']} attacks in {c['attack_classes']} classes, "
+              f"{c['control_scenarios']} controls); development {c['development']['scenarios']}, held-out {c['held_out']['scenarios']}; "
+              f"{c['variants_per_attack']} seeded variants per attack")
+
+        def cell(rate):
+            return "n/a" if rate["value"] is None else f"{rate['numerator']}/{rate['denominator']}"
+
+        print(f"{'strategy':24} {'feas':5} {'front':5} {'sel':3} | dev: prev  transfer comp   fp-calls cmplx | held-out: prev  transfer comp   fp-calls")
+        for s in result["strategies"]:
+            d, h = s["development"], s["held_out"]
+            print(f"{s['name']:24} {str(s['feasible'])[0]:5} {str(s['on_frontier'])[0]:5} {str(s['selected'])[0]:3} | "
+                  f"     {cell(d['forbidden_effects_prevented']):5} {cell(d['transfer_prevented']):8} {cell(d['task_completion']):6} "
+                  f"{cell(d['false_positive_calls']):8} {d['complexity_mean']:<5} |           {cell(h['forbidden_effects_prevented']):5} "
+                  f"{cell(h['transfer_prevented']):8} {cell(h['task_completion']):6} {cell(h['false_positive_calls'])}")
+        print(f"selected (suggestion, not proof of optimality): {result['selected']}")
+        for label in ("development", "held_out"):
+            print(f"arms on {label}:")
+            for arm in result["arms"][label]:
+                s = arm["score"]
+                print(f"  {arm['arm']:22} prevented {cell(s['forbidden_effects_prevented']):5} completion {cell(s['task_completion']):6} "
+                      f"fp-calls {cell(s['false_positive_calls']):7} denial {cell(s['denial_rate'])}")
+        if handle:
+            json.dump(result, handle, indent=2)
+            print(f"results written to {out}")
+        return 0
+    finally:
+        if handle:
+            handle.close()
+
+
 def _reset(db: str) -> None:
     store = RunStore(db)
     try:
@@ -142,6 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("scenario", choices=sorted(REGISTRY))
     run.add_argument("--db", default="necroshield.db")
     run.add_argument("--export", help="write the pair export to this new JSON file")
+    evo = sub.add_parser("evolve", help="closed-loop policy evaluation over the corpus (keyless)")
+    evo.add_argument("--variants", type=int, default=3, choices=range(0, 7))
+    evo.add_argument("--out", help="write the full results to this new JSON file")
     reset = sub.add_parser("reset-store", help="delete all stored runs (demo reset)")
     reset.add_argument("--db", required=True)
     reset.add_argument("--yes", action="store_true", help="confirm deletion")
@@ -157,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "live":
         return _live(args)
+    if args.command == "evolve":
+        try:
+            return _evolve(args.variants, args.out)
+        except FileExistsError:
+            print(f"refusing to overwrite existing file: {args.out}", file=sys.stderr)
+            return 1
     if args.command == "reset-store":
         if not args.yes:
             print("refusing to reset without --yes", file=sys.stderr)

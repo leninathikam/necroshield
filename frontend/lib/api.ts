@@ -1,5 +1,7 @@
 import type {
   Benchmark,
+  CorpusRow,
+  Evolution,
   LiveStatus,
   McpReplay,
   Mode,
@@ -7,6 +9,7 @@ import type {
   RunDetail,
   RunSummary,
   ScenarioView,
+  Theatre,
   ToolSpecView,
   Verification,
 } from "./types";
@@ -53,6 +56,13 @@ export const api = {
   mcpReplay: (scenarioId: string, mode: Mode) => post<McpReplay>("/api/mcp/replay", { scenario_id: scenarioId, mode }),
   liveStatus: (signal?: AbortSignal) => request<LiveStatus>("/api/live/status", { signal }),
   tools: (signal?: AbortSignal) => request<ToolSpecView[]>("/api/tools", { signal }),
+  corpus: (signal?: AbortSignal) => request<CorpusRow[]>("/api/corpus", { signal }),
+  evolution: (variants = 3, signal?: AbortSignal) => request<Evolution>(`/api/evolution?variants=${variants}`, { signal }),
+  theatre: (scenarioId: string, signal?: AbortSignal) =>
+    request<Theatre>(`/api/theatre/${encodeURIComponent(scenarioId)}`, { signal }),
+  approve: (scenarioId: string, strategy: string) =>
+    post<RunDetail>(`/api/theatre/${encodeURIComponent(scenarioId)}/approve`, { strategy }),
+  evolutionUrl: "/api/evolution?variants=3",
   exportUrl: (pairId: string) => `/api/runs/${encodeURIComponent(pairId)}/export`,
   bundleUrl: "/api/benchmark/bundle",
 };

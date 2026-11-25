@@ -21,9 +21,11 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import agent
 from ..catalog import REGISTRY
+from ..corpus import CORPUS, DEVELOPMENT_IDS
 from ..evidence import redact
 from ..live import ProviderConfig, run_live
 from ..mcp_server import replay_over_mcp
+from ..optimizer import candidate_policy, evolve, theatre
 from ..metrics import BUNDLE_FORMAT, summarize
 from ..runner import decisive_denials, run_pair
 from ..scenarios import Policy, Scenario
@@ -31,7 +33,7 @@ from ..storage import RunStore, StorageFull, StoredPair
 from ..tools import TOOLS
 from ..verification import verify_export
 from .guards import Guards, RateLimiter
-from .schemas import LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest
+from .schemas import ApproveRequest, LiveRunRequest, McpDemoRequest, PolicyIn, RunRequest
 
 MAX_BODY = 256 * 1024
 MIN_OPERATOR_TOKEN = 32
@@ -182,6 +184,45 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
     @app.get("/api/pins")
     def pins() -> dict[str, dict[str, str]]:
         return _current_pins()
+
+    @app.get("/api/corpus")
+    def corpus() -> list[dict[str, Any]]:
+        """The evaluation corpus with its fixed development / held-out split."""
+        return [{"id": s.scenario_id, "version": s.version, "kind": s.kind, "title": s.title,
+                 "attack_class": s.attack_class, "digest": s.digest(),
+                 "split": "development" if s.scenario_id in DEVELOPMENT_IDS else "held_out"} for s in CORPUS.values()]
+
+    @app.get("/api/evolution")
+    def evolution(variants: int = Query(3, ge=0, le=6)) -> dict[str, Any]:
+        """Closed-loop evaluation of every policy strategy (deterministic, keyless, cached)."""
+        return evolve(variants)
+
+    theatre_cache: dict[tuple[str, int], dict[str, Any]] = {}
+
+    @app.get("/api/theatre/{scenario_id}")
+    def theatre_view(scenario_id: str, variants: int = Query(3, ge=0, le=6)) -> dict[str, Any]:
+        key = (scenario_id, variants)
+        if key not in theatre_cache:
+            try:
+                theatre_cache[key] = theatre(scenario_id, variants)
+            except KeyError:
+                raise HTTPException(404, "unknown or non-attack scenario") from None
+        return theatre_cache[key]
+
+    @app.post("/api/theatre/{scenario_id}/approve", status_code=201)
+    def theatre_approve(scenario_id: str, request: ApproveRequest) -> dict[str, Any]:
+        """A human approves one candidate: it runs as a custom policy and is recorded as such.
+        Scenario defaults and the enforcement engine are never changed."""
+        scenario_obj = CORPUS.get(scenario_id)
+        if scenario_obj is None:
+            raise HTTPException(404, "unknown scenario")
+        try:
+            policy = candidate_policy(scenario_id, request.strategy)
+        except KeyError:
+            raise HTTPException(404, "unknown strategy for this scenario") from None
+        pair = run_pair(scenario_obj, policy)
+        _save(pair)
+        return _detail(store.load(pair.pair_id))
 
     @app.post("/api/runs", status_code=201)
     def create_run(request: RunRequest) -> dict[str, Any]:

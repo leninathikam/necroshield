@@ -263,3 +263,51 @@ def test_seed_on_start_fills_the_benchmark_once(tmp_path, monkeypatch):
         first = c.get("/api/health").json()["stored_pairs"]
     with TestClient(create_app(db, allowed_origins={ORIGIN})) as c:
         assert c.get("/api/health").json()["stored_pairs"] == first == 7
+
+
+def test_corpus_lists_the_fixed_split(client):
+    rows = client.get("/api/corpus").json()
+    assert len(rows) == 21 and sum(r["kind"] == "control" for r in rows) == 11
+    assert {r["split"] for r in rows} == {"development", "held_out"}
+    assert next(r for r in rows if r["id"] == "document_injection")["split"] == "development"
+
+
+def test_evolution_endpoint_matches_the_core_and_is_bounded(client):
+    from necroshield.optimizer import evolve
+    body = client.get("/api/evolution").json()
+    assert body["selected"] == "scoped_trace" == evolve(3)["selected"]
+    assert client.get("/api/evolution?variants=99").status_code == 422
+    assert client.get("/api/evolution?variants=-1").status_code == 422
+
+
+def test_theatre_endpoint(client):
+    t = client.get("/api/theatre/data_exfiltration").json()
+    assert t["selected"] == "scoped_trace" and t["red_team"]["baseline_attack_succeeded"]
+    assert client.get("/api/theatre/benign_invoice").status_code == 404
+    assert client.get("/api/theatre/nope").status_code == 404
+
+
+def test_approving_a_candidate_runs_it_as_a_verified_custom_policy(client):
+    ok = client.post("/api/theatre/tool_response_injection/approve", json={"strategy": "scoped_trace"})
+    assert ok.status_code == 201
+    body = ok.json()
+    assert body["verification"]["verified"] and body["export"]["policy"]["source"] == "custom"
+    assert body["summary"]["protected"]["attack_succeeded"] is False and body["summary"]["protected"]["task_completed"]
+    # A rejected candidate can still be run, and it visibly fails.
+    bad = client.post("/api/theatre/tool_response_injection/approve", json={"strategy": "allow_all"}).json()
+    assert bad["summary"]["protected"]["attack_succeeded"] is True and bad["verification"]["verified"]
+    # Scenario defaults are untouched by approvals.
+    assert REGISTRY["tool_response_injection"].policy.digest() == client.get("/api/pins").json()["tool_response_injection"]["policy_digest"]
+
+
+@pytest.mark.parametrize("strategy, status", [("global_scoped", 404), ("nope", 404), ("Bad Name", 422), ("", 422)])
+def test_approve_rejects_unknown_strategies(client, strategy, status):
+    assert client.post("/api/theatre/document_injection/approve", json={"strategy": strategy}).status_code == status
+
+
+def test_approve_is_rate_limited_like_other_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_WRITE_LIMIT", "2")
+    app = create_app(str(tmp_path / "a.db"), allowed_origins={ORIGIN})
+    with TestClient(app) as c:
+        codes = [c.post("/api/theatre/document_injection/approve", json={"strategy": "scoped_trace"}).status_code for _ in range(3)]
+    assert codes == [201, 201, 429]
