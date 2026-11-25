@@ -587,13 +587,20 @@ _GX = _recover_x(_GY, 0)
 _G = (_GX, _GY, 1, _GX * _GY % _P)
 
 
+def _small_order(point: tuple) -> bool:
+    """True for the 8 points of order dividing 8. With such an A or R, signatures can be forged for any
+    message, so strict verification refuses them (stricter than RFC 8032, which permits them)."""
+    return _equal(_mul(8, point), (0, 1, 1, 0))
+
+
 def ed25519_verify(public: bytes, message: bytes, signature: bytes) -> bool:
-    """RFC 8032 verification. Rejects wrong lengths, non-canonical S, and points that do not decode."""
+    """RFC 8032 verification, strict: rejects wrong lengths, non-canonical S, points that do not
+    decode, and small-order public keys or nonces."""
     if len(public) != 32 or len(signature) != 64:
         return False
     a_point, r_point = _decompress(public), _decompress(signature[:32])
     s = int.from_bytes(signature[32:], "little")
-    if a_point is None or r_point is None or s >= _Q:
+    if a_point is None or r_point is None or s >= _Q or _small_order(a_point) or _small_order(r_point):
         return False
     h = int.from_bytes(hashlib.sha512(signature[:32] + public + message).digest(), "little") % _Q
     return _equal(_mul(s, _G), _add(r_point, _mul(h, a_point)))
@@ -618,10 +625,16 @@ def parse_public_key(text: str) -> bytes:
         raise Malformed("public key must be 32 bytes as hex or base64") from None
     if len(raw) != 32:
         raise Malformed("public key must be 32 bytes")
+    point = _decompress(raw)
+    if point is None:
+        raise Malformed("public key is not a valid Ed25519 point")
+    if _small_order(point):
+        raise Malformed("public key has small order: any signature would verify")
     return raw
 
 
-def verify_signed(document: Any, public_key: bytes, pins: dict | None = None) -> list[str]:
+def verify_signed(document: Any, public_key: bytes, pins: dict | None = None, scenario_digest: str | None = None,
+                  policy_digest: str | None = None) -> list[str]:
     """Check the signature against a TRUSTED public key, then verify the payload itself."""
     problems: list[str] = []
     try:
@@ -641,7 +654,7 @@ def verify_signed(document: Any, public_key: bytes, pins: dict | None = None) ->
             return ["signature is not valid base64"]
         if not ed25519_verify(public_key, signed_message(signature["key_id"], signature["signed_at"], document["payload"]), raw_sig):
             return ["signature does not match the payload"]
-        problems += [f"payload: {p}" for p in verify_any(document["payload"], pins=pins)]
+        problems += [f"payload: {p}" for p in verify_any(document["payload"], scenario_digest, policy_digest, pins)]
     except Malformed as exc:
         problems.append(f"malformed signed document: {exc}")
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
@@ -680,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     elif trusted is not None and not is_signed:
         problems = ["a trusted public key was given, but the file carries no signature"]
     elif is_signed:
-        problems = verify_signed(export, trusted, pins)
+        problems = verify_signed(export, trusted, pins, args.scenario_digest, args.policy_digest)
         export = export["payload"] if not problems else export
     else:
         problems = verify_any(export, args.scenario_digest, args.policy_digest, pins)
