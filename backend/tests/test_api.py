@@ -439,8 +439,9 @@ def test_health_reports_the_effective_configuration(tmp_path, monkeypatch):
         h = c.get("/api/health").json()
     assert h["limits_per_minute"]["write"] == 30 and h["proxy_hops"] == 1
     assert h["seed_on_start"] is True and h["database_ephemeral"] is True
-    with TestClient(create_app(str(tmp_path / "x.db"), allowed_origins={ORIGIN})) as c:
-        assert c.get("/api/health").json()["database_ephemeral"] is False
+    from necroshield.api.app import _is_ephemeral
+    assert _is_ephemeral("/tmp/necroshield.db") and _is_ephemeral(":memory:")
+    assert not _is_ephemeral("/data/necroshield.db") and not _is_ephemeral("/tmpfoo/x.db")
 
 
 def test_theatre_endpoint_reports_split_and_manual_reference(client):
