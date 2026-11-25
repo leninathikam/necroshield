@@ -198,9 +198,11 @@ export default function TheatrePage() {
   const [result, setResult] = useState<RunDetail | null>(null);
   const [approving, setApproving] = useState(false);
   const generation = useRef(0);
+  const approveGeneration = useRef(0);
 
   async function run() {
     const mine = ++generation.current;
+    approveGeneration.current++;  // an approval started for an earlier run must not render under this one
     setRunning(true);
     setError("");
     setResult(null);
@@ -227,15 +229,18 @@ export default function TheatrePage() {
 
   async function approve() {
     if (!data) return;
+    const mine = ++approveGeneration.current;
     setApproving(true);
     setError("");
     try {
-      setResult(await api.approve(data.scenario.id, chosen));
+      const outcome = await api.approve(data.scenario.id, chosen);
+      if (mine !== approveGeneration.current) return;
+      setResult(outcome);
       setRevealed(STAGES.length);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mine === approveGeneration.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setApproving(false);
+      if (mine === approveGeneration.current) setApproving(false);
     }
   }
 
@@ -295,7 +300,7 @@ export default function TheatrePage() {
 
       {error && <ErrorState prefix="Failed" message={error} />}
       {!data && !running && !error && (
-        <div className="state">Choose an attack and press <strong>Run Attack Theatre</strong>. It takes about five seconds.</div>
+        <div className="state">Choose an attack and press <strong>Run Attack Theatre</strong>. The stages reveal over a few seconds.</div>
       )}
 
       {data && (
@@ -355,7 +360,7 @@ export default function TheatrePage() {
                 however convenient they are. Objectives: {data.objectives}.
               </p>
               <div className="grid-2">
-                <ParetoChart points={points} caption="Security–utility trade-off of the candidate policies" />
+                <ParetoChart points={points} caption="Candidate policies by complexity and task completion; rejected candidates are crosses" />
                 <div>
                   <div className="label">Which decision changed the result (selected candidate)</div>
                   <Attributions analysis={data.counterfactual} />
