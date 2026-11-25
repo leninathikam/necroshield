@@ -130,7 +130,7 @@ export default function Arena() {
               <div className="panel row" style={{ alignItems: "flex-end" }}>
                 <label>
                   Scenario
-                  <select value={id} onChange={(e) => setSelected(e.target.value)}>
+                  <select aria-label="Scenario" value={id} onChange={(e) => setSelected(e.target.value)}>
                     {list.map((x) => (
                       <option key={x.id} value={x.id}>{x.title} ({x.kind})</option>
                     ))}
@@ -138,7 +138,7 @@ export default function Arena() {
                 </label>
                 <label>
                   Target agent
-                  <select value={target} onChange={(e) => setTarget(e.target.value as Target)}>
+                  <select aria-label="Target agent" value={target} onChange={(e) => setTarget(e.target.value as Target)}>
                     <option value="fixture">Fixture agent: baseline + protected pair (deterministic replay)</option>
                     <option value="mcp">Fixture agent over MCP (official SDK session)</option>
                     <option value="live" disabled>
