@@ -16,7 +16,7 @@ test("attack theatre: attack, candidates, evaluation, approval, verified outcome
   await expect(table.getByRole("row", { name: /violation_patch/ })).toContainText("non-dominated");
 
   await expect(page.getByRole("heading", { name: /4 · Independent evaluation/ })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("img", { name: /Security–utility trade-off/ })).toBeVisible();
+  await expect(page.getByRole("img", { name: /Candidate policies by complexity and task completion/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /5 · Human approval/ })).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: "Approve and run this candidate" }).click();
