@@ -81,3 +81,29 @@ Fixed findings and their tests are listed in `evidence/final-verification.md`. E
   - a synthetic canary flagged by gitleaks (allowlisted narrowly);
   - a mobile layout overlap (Playwright on a Pixel 7 profile).
 - Ran review 2 and fixed its findings.
+
+---
+
+# NecroShield 2.0 session (2026-11-24, Kiro Web)
+
+## What was used, and what was not
+| Feature | Used? | Evidence |
+|---|---|---|
+| Specs | Yes | `.kiro/specs/necroshield-2/` (requirements R15 to R23, design, tasks with status notes). Work followed it, and the notes record where it changed. |
+| Steering | Yes | `product.md`, `tech.md`, `security.md`, `testing.md` were in context (the exact-counts rule shaped every report). `.kiro/steering/evaluation.md` was written **after** the review of the evaluation; it did not exist while the first optimizer was written. |
+| Subagent (`semantic_reviewer`) | Yes | One independent review of 2.0 (20 findings) and the two earlier reviews. No other subagent or custom agent. |
+| Hooks | Configured; execution **still not observed** | `.kiro/hooks/backend-tests-on-save.json` exists; no hook output appeared in any session. Not claimed as run. |
+| Kiro Crew, Powers, MCP during development | No | Not used. The sandbox's MCP server is product code, never attached to Kiro. |
+
+## What the review changed (measurable)
+- The headline held-out comparison was reframed after the reviewer showed it was not a generalisation test. The Lab now leads with a held-out finding: the suggested policy fails one held-out attack.
+- Test counts in CI: 143 (before the earlier audit) → 198 → 281 → 393 passed, 0 skipped. Playwright: 18 → 20 → 34.
+- Defects the review found and CI confirmed or the reviewer proved with probes: forgeable patch re-check, nine unnoticed MCP drift classes, small-order Ed25519 keys, ignored digest flags. Each has a regression test.
+
+## What spec-driven development did and did not do
+It forced requirement-level statements before code (for example R16.2, the mandatory constraint, and R17.1, held-out selection). It did **not** prevent the two process errors the review found: adding the transfer objective after seeing a held-out number, and mislabeling per-task held-out results. Those came from the evaluator's own design, which the spec had not constrained. The new steering file exists because of that.
+
+## Honest accounting of defects
+Found by me while building: undercounted false positives (bound-value matching), the evolution first selecting an overfitting patch.
+Found by CI: the approval stage never rendering, `ManifestDrift` surfacing as a 500, a stale verifier in CI because of incomplete staging.
+Found by the independent review: everything in `evidence/final-verification.md` under the 2.0 table.
