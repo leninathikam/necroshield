@@ -2,28 +2,43 @@
 
 An adversarial security-testing arena for AI agent and MCP tool workflows. Everything runs on synthetic data.
 
-An agent works on an invoice task while attacker-controlled text, in a document or a tool response, tells it to do something else. NecroShield runs the same intended calls twice, each from fresh state:
+An agent works on an invoice task while attacker-controlled text, in a document or a tool response, tells it to do something else. NecroShield runs the same intended calls twice, each from fresh state: **baseline** (every call dispatched) and **protected** (a default-deny capability policy checked before each dispatch). Outcomes come only from observable synthetic effects, so the arena measures both whether an attack was stopped and whether the legitimate task still completed. Every run produces redacted, hash-chained evidence that a standalone script can re-verify.
 
-- **baseline**: every call is dispatched;
-- **protected**: a default-deny capability policy is checked before each dispatch.
-
-Outcomes come only from observable synthetic effects: a canary reaching the in-memory sink, a forbidden read, poisoned memory, or the correct report. So the arena measures both whether an attack was stopped and whether the legitimate task still completed. Every run produces redacted, hash-chained evidence. A standalone script can re-derive the outcomes from that evidence and reject forgeries.
+Version 2.0 adds a bounded closed loop on top of that: a Red Team makes seeded variations, a Blue Team proposes structured policy candidates, an independent evaluator scores them, and **a human approves** what runs. The model never edits the enforcement engine and cannot grant itself anything.
 
 ## What works (verified in CI)
-- **Seven scenarios:** document injection, tool-response injection, unauthorized record access, exfiltration through an allowed channel, path-based scope manipulation, memory poisoning, and a benign control.
-- **Counterfactual lab:** edit a policy, rerun it, and see which single denial changed the outcome.
-- **MCP sandbox:** built on the official SDK, with the gateway in front of every tool. A real client session replays the attack.
-- **Web app:** seven screens (Dashboard, Attack Arena, Execution Graph, Replay Lab, Policy Inspector, Evidence Explorer, Benchmark Studio), served by the FastAPI app as a static export.
-- **Benchmark:** metrics with explicit denominators, and a downloadable bundle whose arithmetic the verifier recomputes.
-- **Live Agent Evaluation track:** a multi-turn loop against any OpenAI-compatible endpoint. It is **unavailable unless you configure a provider**, and no real-model results exist yet.
+- **22 scenarios**: 11 attacks in 6 classes and 11 benign controls, split into development (10) and held-out (12) before any synthesis ran.
+- **Attack Theatre**: attack, red-team variants, candidate policies, independent evaluation, approval, and a verified outcome, all from backend runs.
+- **Policy Lab**: eight policy strategies, exact denominators, a mandatory security constraint, a Pareto frontier, cross-attack transfer, and held-out results with their limits stated.
+- **Security patch compiler**: a failure becomes a JSON patch with a regression spec that can be re-checked offline. Nothing is applied automatically.
+- **MCP trust inspector**: the sandbox's real `tools/list` is hashed and compared with an approved manifest. Description, schema, tool, and annotation drift are refused until a person approves that exact digest.
+- **Optional Ed25519 signed evidence**, verified by the standalone verifier in pure Python. See `docs/evidence-signing.md` for what a signature does and does not prove.
+- **MCP sandbox** on the official SDK, with the gateway in front of every tool.
+- **Live Agent Evaluation track**: unavailable unless an operator configures a provider, and **no real-model results exist yet**.
 
-Current fixture results (`deterministic_intent_replay`):
+## Results (deterministic fixture replay; scenarios v2.0.0 / corpus above)
+Original seven scenarios (`python -m necroshield benchmark`): unprotected attack success 6/6, protected 0/6; task completion 6/7 unprotected, 7/7 protected; false positives 0/1; denial rate 6/36.
 
-| | Baseline | Protected |
-|---|---|---|
-| Attack success | 6/6 | 0/6 |
-| Task completion | 6/7 | 7/7 |
-| False positives | | 0/1 |
+Policy evaluation (`python -m necroshield evolve`). The selection uses development scores only:
+
+| Strategy | Dev: attacks stopped | Dev: tasks | Held-out: attacks stopped | Held-out: tasks | Held-out is a generalisation test? |
+|---|---|---|---|---|---|
+| allow_all, tool_allowlist, global_tool_allowlist | rejected | | | | |
+| deny_all | 5/5 | 0/10 | 6/6 | 0/12 | no (blocks everything) |
+| **scoped_trace** (suggested) | 5/5 | 10/10 | **5/6** | 11/12 | no: compiled from each scenario's own plan |
+| exact_trace | 5/5 | 10/10 | 6/6 | 12/12 | no: same |
+| violation_patch | 5/5 | 10/10 | 6/6 | 12/12 | no: same; but stops only 1/5 sibling attacks |
+| global_scoped | 5/5 | 10/10 | 4/6 | 7/12 | **yes** (fitted on development only) |
+
+Read these honestly:
+- The suggested policy **fails one held-out attack** (`memory_overwrite_allowed_key`): it leaves free-text arguments open. The Lab reports this on the page.
+- For per-scenario strategies, held-out scores show that a policy compiled from the right plan works. They are not evidence of generalisation. The only real generalisation test is `global_scoped`, and it is weak.
+- The cross-attack transfer objective was added after a held-out result, and one held-out attack was added after an independent review. Both are disclosed in the results JSON and `docs/benchmark-methodology.md`.
+- The corpus is small and author-built; the split is author-chosen. These results say nothing about how a language model behaves.
+
+## Not implemented
+- **Information-flow tracking and data provenance (spec R19).** The policy pins argument values (including attachments by reference), which constrains some flows, but there is no label propagation. This is not information-flow control.
+- **Public deployment**, **real-model runs**, the **demo video**, and corpus growth toward 30 scenarios. See `evidence/final-verification.md`.
 
 ## Run it
 Docker:
@@ -41,40 +56,31 @@ NECROSHIELD_STATIC=../frontend/out python -m uvicorn necroshield.api.app:app_fro
 Core only (no dependencies):
 ```
 cd backend
-python -m necroshield benchmark
+python -m necroshield benchmark                      # the seven catalog scenarios
+python -m necroshield evolve --out evolution.json    # policy strategies over the corpus
+python -m necroshield patch data_exfiltration --base violation_patch --base-from tool_response_injection --out patch.json
+python -m necroshield check-patch patch.json
 python -m necroshield scenarios --pins > pins.json
 python -m necroshield run document_injection --export pair.json
 python ../scripts/verify_evidence.py pair.json --pins pins.json
 ```
+Signing (needs the `cryptography` package): `python -m necroshield keygen --out key.b64`, then `sign` and `verify_evidence.py --public-key`.
 
 ## Tests
 ```
 cd backend && pip install -r requirements.txt -r requirements-test.txt -c constraints.txt && python -m pytest -o addopts="" -q
 cd frontend && npm ci && npm run lint && npm run typecheck && npm run build && npx playwright test
 ```
-CI (`.github/workflows/ci.yml`) runs:
-- the core suite on Python 3.11 to 3.14;
-- the full backend suite with no skips allowed;
-- benchmark and bundle verification with pinned digests;
-- frontend lint, typecheck, build, and `npm audit`;
-- Playwright on desktop and mobile against the real API;
-- a container build and smoke test;
-- `pip-audit` and gitleaks.
+CI (`.github/workflows/ci.yml`) runs the core suite on Python 3.11 to 3.14, the full backend suite with no skips allowed, benchmark and bundle verification with pinned digests, frontend lint, typecheck, build and `npm audit`, Playwright on desktop and mobile against the real API, a production-conditions container job (assigned PORT, root-owned disk, restart, reset, peak memory under 512 MB), `pip-audit`, and gitleaks.
 
-## Live model (optional)
-Set `NECROSHIELD_LLM_BASE_URL` (https only), `NECROSHIELD_LLM_API_KEY`, `NECROSHIELD_LLM_MODEL`, and `NECROSHIELD_LLM_ALLOWED_HOSTS`. Optionally set `NECROSHIELD_LLM_PRICE_IN_PER_MTOK` and `NECROSHIELD_LLM_PRICE_OUT_PER_MTOK` to get cost reporting. Runs are budgeted per request and per process.
+## Live model (optional, operator-only)
+Paid inference is never available to visitors. See `docs/live-evaluation.md` for the budgeted CLI (`python -m necroshield live`, $2 cap by default).
 
 ## Integrity limits
-Exports are not signed. The verifier catches:
-- edited, reordered, or missing events;
-- decisions that contradict the policy;
-- bound arguments and outcomes that don't follow from the recorded effects;
-- headers that don't match the scenario digest.
-
-A complete, self-consistent rewrite is caught only when digests are pinned from a trusted source (`--pins`). See `docs/threat-model.md`.
+The verifier catches edited, reordered, or missing events; decisions that contradict the policy; bound arguments and outcomes that do not follow from the recorded effects; and headers that do not match the scenario digest. Exports are **not signed by default**. A complete, self-consistent rewrite is caught only when digests are pinned from a trusted source, or when a signature from a trusted key is required. A signature proves who vouched for the content, not that the run was honest. See `docs/threat-model.md`.
 
 ## Docs
-`docs/architecture.md` · `docs/threat-model.md` · `docs/benchmark-methodology.md` · `docs/kiro-development.md` · `docs/hackathon-compliance.md` · `docs/demo-script.md` · `evidence/final-verification.md`
+`docs/architecture.md` · `docs/threat-model.md` · `docs/benchmark-methodology.md` · `docs/evidence-signing.md` · `docs/deployment.md` · `docs/live-evaluation.md` · `docs/kiro-development.md` · `docs/hackathon-compliance.md` · `docs/demo-script.md` · `evidence/final-verification.md`
 
 ## License
 MIT

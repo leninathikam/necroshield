@@ -30,7 +30,7 @@ Requirements R1–R14 from earlier specs still apply. Priorities: P0 must ship; 
 - R18.1 From an observed failure (an attack effect under some policy), the system SHALL produce a JSON patch with the base policy, the proposed policy, structured operations, a regression-test specification, and evaluation results on development and held-out sets.
 - R18.2 A patch SHALL be applied only by an explicit human run.
 
-## R19 Information-flow constraints (P1)
+## R19 Information-flow constraints (P1) — NOT IMPLEMENTED
 - R19.1 Synthetic records SHALL carry classification labels. Labels SHALL propagate through the supported transformations: verbatim inclusion of labeled text, and attachment by reference.
 - R19.2 Policies MAY constrain which destinations may receive each label. Violations SHALL be denied before dispatch.
 - R19.3 Documentation SHALL list the supported transformations and SHALL NOT claim general information-flow tracking.

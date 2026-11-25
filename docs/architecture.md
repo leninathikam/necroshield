@@ -52,3 +52,38 @@ Next.js 15 (App Router, static export), React 19, and `@xyflow/react` 12, with p
 - **SQLite over PostgreSQL for the deployed demo.** The demo is one instance with an append-only evidence log that is verified on read, and SQLite removes a managed database from the judge path. The tradeoff: no horizontal scaling and no concurrent writers across instances. A PostgreSQL adapter is not implemented.
 - **Static export served by FastAPI.** One container, same-origin API calls, and no Node runtime in production.
 - **No Redis or queue.** A pair runs in about a millisecond, so no queue is needed.
+
+
+---
+
+# 2.0 additions
+
+| Module | Role |
+|---|---|
+| `variants.py` (Red Team) | Seeded value-swap variants of an attack. Reproducible across processes; never adds a tool, an instruction shape, or an attack class |
+| `corpus.py` | 22 scenarios, the fixed development / held-out split, 11 benign controls |
+| `synthesis.py` (Blue Team) | Eight strategies that build ordinary validated `Policy` objects from the trusted plan (and, for one, observed violations) |
+| `optimizer.py` (Evaluator) | Scores candidates through the existing runner and gateway; mandatory constraint; Pareto frontier; held-out and four-arm reports; theatre |
+| `patches.py` | Compiles an observed failure into a patch with a regression spec; `check_patch` recompiles and compares |
+| `manifest.py` + `mcp_server.py` | Manifest hashing over the full canonical schema, human-readable drift diff, and the activation gate in front of MCP replay |
+| `signing.py` + verifier | Optional Ed25519 signing (constant-time library); pure-Python strict verification |
+
+All of them run through `Gateway`. None changes how a decision is made.
+
+## Flow of the Attack Theatre
+```
+attack scenario ──▶ unprotected run (real effects) ──▶ Red Team variants (seeded)
+        │                                                     │
+        ▼                                                     ▼
+Blue Team candidates (Policy objects) ──▶ evaluator (runner + gateway) ──▶ constraint, frontier, suggestion
+                                                              │
+                          human approves one ◀────────────────┘
+                                │
+                      custom-policy pair run ──▶ stored ──▶ re-verified on read ──▶ optional signature
+```
+
+## Free-tier budget
+Everything is in-process and bounded: at most 8 strategies, 22 scenarios, 6 variants per attack, and results cached by immutable inputs (one computation per distinct request, under a lock). CI measures peak resident memory of the container after the judge flow and fails above 512 MB.
+
+## Not built
+Information-flow labels and provenance (R19), PostgreSQL, and a model in the synthesis loop. The synthesis is deterministic and keyless, so the public demo needs no API key.
