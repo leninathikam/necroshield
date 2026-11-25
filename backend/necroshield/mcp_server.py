@@ -149,9 +149,8 @@ async def replay_over_mcp(scenario: Scenario, protected: bool, policy: Policy | 
         listed = await client.list_tools()
         manifest = manifest_from_listing(listed.tools)
         decision = gate(load_approved(), manifest, frozenset({approve_digest}) if approve_digest else frozenset())
-        if not decision["activate"]:
-            raise ManifestDrift({**decision, "observed_digest": manifest["digest"]})
-        for intent in intents:
+        # Never raise inside the session: the SDK's task group wraps it in an ExceptionGroup.
+        for intent in (intents if decision["activate"] else ()):
             call = agent.bind(intent, facts)
             before = len(sandbox.records)
             result = await client.call_tool(call.tool, dict(call.args))
@@ -165,6 +164,8 @@ async def replay_over_mcp(scenario: Scenario, protected: bool, policy: Policy | 
                 "reason": record.decision.reason if record else "rejected by MCP before reaching the gateway",
                 "dispatched": record.dispatched if record else False,
             })
+    if not decision["activate"]:
+        raise ManifestDrift({**decision, "observed_digest": manifest["digest"]})
     outcome = evaluate_outcome(scenario, sandbox.gateway.env)
     return redact({
         "transport": "mcp in-memory session (official SDK)",

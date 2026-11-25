@@ -35,7 +35,8 @@ ok(bench["summary"]["attack_success"]["protected"]["numerator"] == 0, "protected
 # All seven pages are served by the deployed build.
 for page, text in [("/", "NecroShield"), ("/arena/", "Attack Arena"), ("/graph/", "Execution Graph"),
                    ("/replay/", "Replay Lab"), ("/policy/", "Policy Inspector"),
-                   ("/evidence/", "Evidence Explorer"), ("/benchmark/", "Benchmark Studio")]:
+                   ("/evidence/", "Evidence Explorer"), ("/benchmark/", "Benchmark Studio"),
+                   ("/theatre/", "Attack Theatre"), ("/lab/", "Policy Lab"), ("/trust/", "MCP Trust")]:
     status, body = call("GET", page)
     ok(status == 200 and text.encode() in body, f"page {page} served")
 
@@ -70,6 +71,26 @@ ok(call("POST", "/api/verify", b"[" * 120000 + b"]" * 120000, {"x-forwarded-for"
 ok(call("POST", "/api/verify", b"{not json", {"x-forwarded-for": "192.0.2.61"})[0] == 422, "invalid JSON rejected")
 ok(call("POST", "/api/runs", {"scenario_id": "x" * 10000}, {"x-forwarded-for": "192.0.2.62"})[0] == 422,
    "oversized field rejected")
+
+# 2.0: evolution, theatre, patch compiler, MCP trust, signing posture.
+status, body = call("GET", "/api/evolution")
+evo = json.loads(body)
+ok(status == 200 and evo["selected"] == "scoped_trace" and evo["corpus"]["scenarios"] == 21, "evolution selects scoped_trace over 21 scenarios")
+ok(any(r["name"] == "violation_patch" and r["held_out"]["transfer_prevented"]["numerator"] == 0 for r in evo["strategies"]),
+   "the overfitting finding is reproduced in the deployed build")
+status, body = call("GET", "/api/theatre/tool_response_injection")
+ok(status == 200 and json.loads(body)["selected"] == "scoped_trace", "theatre selects a verified candidate")
+status, body = call("POST", "/api/theatre/tool_response_injection/approve", {"strategy": "scoped_trace"}, same)
+approved = json.loads(body)
+ok(status == 201 and approved["verification"]["verified"] and not approved["summary"]["protected"]["attack_succeeded"], "approved candidate runs and verifies")
+status, body = call("GET", "/api/patch?scenario_id=data_exfiltration&base=violation_patch&base_from=tool_response_injection")
+ok(status == 200 and json.loads(body)["all_cases_pass"], "patch compiler output passes its own regression spec")
+status, body = call("POST", "/api/mcp/inspect", {"drift": "tool_added"}, same)
+ok(status == 200 and json.loads(body)["activate"] is False, "MCP drift is refused")
+status, body = call("POST", "/api/mcp/replay", {"scenario_id": "document_injection", "drift": "description_injection"}, same)
+ok(status == 409, "MCP replay on drifted tools is refused before any call")
+ok(json.loads(call("GET", "/api/signing")[1])["enabled"] is False, "signing is off without a configured key")
+ok(call("GET", "/api/benchmark/bundle?signed=true")[0] in (409,), "signed bundles are unavailable without a key")
 
 # Paid inference cannot be triggered publicly.
 status, body = call("GET", "/api/live/status")

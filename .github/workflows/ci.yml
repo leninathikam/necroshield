@@ -187,6 +187,12 @@ jobs:
           for i in $(seq 1 40); do curl -sf http://127.0.0.1:10000/api/health && break; sleep 1; done
       - name: judge path, same-origin writes, isolation, limits
         run: python3 .github/scripts/container_smoke.py http://127.0.0.1:10000
+      - name: peak memory stays under the Render Free limit after the judge flow
+        run: |
+          for i in 1 2 3; do curl -sf http://127.0.0.1:10000/api/evolution >/dev/null; done
+          peak_kb=$(docker exec ns grep VmHWM /proc/1/status | awk '{print $2}')
+          echo "peak resident memory: $((peak_kb / 1024)) MB (limit 512 MB)"
+          test "$peak_kb" -lt 524288
       - name: service runs as uid 10001 and the disk file belongs to it
         run: |
           docker exec ns cat /proc/1/status | grep -E "^Uid:\s+10001\s"
