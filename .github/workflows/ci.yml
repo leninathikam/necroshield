@@ -211,13 +211,40 @@ jobs:
         run: |
           docker exec ns python -m necroshield reset-store --db /data/necroshield.db --yes
           test "$(curl -sf http://127.0.0.1:10000/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")" = 0
-      - name: free-plan configuration from render.yaml (database in /tmp, no disk)
+      - name: free-plan configuration taken from render.yaml (database in /tmp, no disk)
         run: |
-          docker run -d --name nsfree -p 10001:10000 -e PORT=10000 -e NECROSHIELD_DB=/tmp/necroshield.db \
-            -e NECROSHIELD_SEED_ON_START=1 -e NECROSHIELD_PROXY_HOPS=1 -e NECROSHIELD_MAX_PAIRS=1000 necroshield:ci
-          for i in $(seq 1 40); do curl -sf http://127.0.0.1:10001/api/health && break; sleep 1; done
+          flags=$(python3 .github/scripts/render_env.py render.yaml)
+          echo "blueprint environment: $flags"
+          start=$(date +%s)
+          docker run -d --name nsfree -p 10001:10000 -e PORT=10000 $flags necroshield:ci
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:10001/api/health >/dev/null && break; sleep 1; done
+          healthy=$(( $(date +%s) - start ))
+          echo "time from docker run to healthy: ${healthy}s (Render's cold start adds image start and routing time on top)"
+          test "$healthy" -lt 60
+          curl -sf http://127.0.0.1:10001/api/health | python3 -c "
+          import json,sys
+          h=json.load(sys.stdin); print(h)
+          assert h['limits_per_minute']['write']==30 and h['proxy_hops']==1 and h['seed_on_start'] and h['database_ephemeral'], h"
           curl -sf http://127.0.0.1:10001/api/benchmark | python3 -c "import json,sys; b=json.load(sys.stdin); assert b['missing_scenarios'] == [], b; print('free plan: seeded', b['summary']['scenarios'], 'scenarios')"
           docker exec nsfree stat -c '%a %U' /tmp | grep -qx '1777 root'
           docker exec nsfree cat /proc/1/status | grep -E "^Uid:\s+10001\s"
+          docker exec nsfree test -f /tmp/necroshield.db
+      - name: smoke test, free-plan configuration, direct (the real write limit is 30)
+        run: python3 .github/scripts/container_smoke.py http://127.0.0.1:10001 --direct
+      - name: smoke test through a proxy that appends the client address, like a platform load balancer
+        run: |
+          python3 .github/scripts/xff_proxy.py 10002 http://127.0.0.1:10001 &
+          sleep 1
+          python3 .github/scripts/container_smoke.py http://127.0.0.1:10002 --proxied
+      - name: replacement instance starts empty and reseeds (what a Render restart or redeploy does)
+        run: |
+          # A Render restart or deploy creates a new instance with a fresh filesystem, so replace the container.
+          flags=$(python3 .github/scripts/render_env.py render.yaml)
+          docker rm -f nsfree
+          docker run -d --name nsfree -p 10001:10000 -e PORT=10000 $flags necroshield:ci
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:10001/api/health >/dev/null && break; sleep 1; done
+          pairs=$(curl -sf http://127.0.0.1:10001/api/health | python3 -c "import json,sys; print(json.load(sys.stdin)['stored_pairs'])")
+          echo "pairs on the replacement instance: $pairs (the seven default pairs; visitor runs are gone)"
+          test "$pairs" = 7
       - if: always()
-        run: docker logs ns || true
+        run: docker logs ns || true; docker logs nsfree || true

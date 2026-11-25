@@ -126,6 +126,14 @@ def _scenario_view(s: Scenario) -> dict[str, Any]:
     })
 
 
+def _is_ephemeral(db_path: str) -> bool:
+    """True when the database sits under a directory that is wiped on restart (/tmp) or is in memory."""
+    if db_path == ":memory:":
+        return True
+    resolved = os.path.abspath(db_path)
+    return resolved == "/tmp" or resolved.startswith("/tmp/")
+
+
 def create_app(db_path: str | None = None, static_dir: str | None = None,
                allowed_origins: set[str] | None = None) -> FastAPI:
     db_path = db_path or os.environ.get("NECROSHIELD_DB", "necroshield.db")
@@ -134,17 +142,18 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
     # Swagger UI loads assets from a CDN, which the CSP forbids; the OpenAPI document stays available.
     app = FastAPI(title="NecroShield", version="0.2.0", docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
     app.state.store = store
+    limits = {
+        "write": _env_int("NECROSHIELD_WRITE_LIMIT", 60),
+        "benchmark": _env_int("NECROSHIELD_BENCHMARK_LIMIT", 6),
+        "global_write": _env_int("NECROSHIELD_GLOBAL_WRITE_LIMIT", 600),
+        "live": _env_int("NECROSHIELD_LIVE_LIMIT", 3),
+        "read": _env_int("NECROSHIELD_READ_LIMIT", 600),
+    }
+    proxy_hops = _env_int("NECROSHIELD_PROXY_HOPS", 0)
     app.add_middleware(
-        Guards, allowed_origins=origins, max_body=MAX_BODY,
-        proxy_hops=_env_int("NECROSHIELD_PROXY_HOPS", 0),
+        Guards, allowed_origins=origins, max_body=MAX_BODY, proxy_hops=proxy_hops,
         client_ip_header=os.environ.get("NECROSHIELD_CLIENT_IP_HEADER") or None,
-        limiter=RateLimiter({
-            "write": _env_int("NECROSHIELD_WRITE_LIMIT", 60),
-            "benchmark": _env_int("NECROSHIELD_BENCHMARK_LIMIT", 6),
-            "global_write": _env_int("NECROSHIELD_GLOBAL_WRITE_LIMIT", 600),
-            "live": _env_int("NECROSHIELD_LIVE_LIMIT", 3),
-            "read": _env_int("NECROSHIELD_READ_LIMIT", 600),
-        }))
+        limiter=RateLimiter(dict(limits)))
 
     @app.exception_handler(RecursionError)
     async def too_deep(_request: Request, _exc: RecursionError) -> JSONResponse:
@@ -172,7 +181,11 @@ def create_app(db_path: str | None = None, static_dir: str | None = None,
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "scenarios": len(REGISTRY), "stored_pairs": store.count(), "max_pairs": store.max_pairs}
+        return {"status": "ok", "scenarios": len(REGISTRY), "stored_pairs": store.count(), "max_pairs": store.max_pairs,
+                "limits_per_minute": dict(limits), "proxy_hops": proxy_hops,
+                "client_ip_header": bool(os.environ.get("NECROSHIELD_CLIENT_IP_HEADER")),
+                "seed_on_start": os.environ.get("NECROSHIELD_SEED_ON_START") == "1",
+                "database_ephemeral": _is_ephemeral(db_path)}
 
     @app.get("/api/client-key")
     def client_key(request: Request) -> dict[str, str]:

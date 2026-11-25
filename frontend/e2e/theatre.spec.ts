@@ -43,7 +43,11 @@ test("a rejected candidate can be run and visibly fails", async ({ page }) => {
 test("policy lab shows strategies, held-out results, and the overfitting finding", async ({ page }) => {
   await page.goto("/lab/");
   await expect(page.getByRole("heading", { name: "Policy Lab" })).toBeVisible();
-  const row = (name: string) => page.getByRole("table", { name: /development and held-out/ }).getByRole("row", { name: new RegExp(name) });
+  const plan = page.getByRole("table", { name: /Plan-conditioned strategies/ });
+  const fitted = page.getByRole("table", { name: /Development-fitted strategies/ });
+  await expect(plan).toContainText("not a generalisation test");
+  await expect(fitted).toContainText("generalisation evidence");
+  const row = (name: string) => (name.startsWith("global_") ? fitted : plan).getByRole("row", { name: new RegExp(name) });
   await expect(row("violation_patch")).toContainText("1/5");
   await expect(row("scoped_trace")).toContainText("4/5");
   await expect(row("scoped_trace")).toContainText("suggested");
@@ -123,4 +127,21 @@ test("mcp trust: clean manifest, drift refused with a readable diff, exact appro
   await page.getByRole("button", { name: "Inspect MCP sandbox" }).click();
   await expect(result).toContainText("network:outbound");
   await expect(result).toContainText("manifest-level");
+});
+
+
+test("theatre shows the failed held-out attack and the manual policy as a reference, not a rival", async ({ page }) => {
+  await page.goto("/theatre/");
+  await page.getByLabel("Attack scenario").selectOption("memory_overwrite_allowed_key");
+  await page.getByRole("button", { name: "Run Attack Theatre" }).click();
+  await expect(page.getByRole("heading", { name: /4 · Independent evaluation/ })).toBeVisible({ timeout: 12_000 });
+  const note = page.getByRole("note", { name: "Policy Lab suggestion" });
+  await expect(note).toContainText("scoped_trace");
+  await expect(note).toContainText("lets the forbidden effect through");
+  await expect(note).toContainText("not a held-out result");
+  const reference = page.getByRole("table", { name: /Manual reference policy/ });
+  await expect(reference).toContainText("not a candidate");
+  await expect(reference).toContainText("author, who knew the attack");
+  await expect(page.getByRole("table", { name: /Candidate policies/ }).getByRole("row", { name: /scoped_trace/ })).toContainText("rejected");
+  await expect(page.getByText(/better than|outperforms|superior/i)).toHaveCount(0);
 });

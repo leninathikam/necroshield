@@ -16,7 +16,7 @@ from statistics import mean, median
 from typing import Any, Callable, Iterable
 
 from .contracts import RunMode
-from .corpus import CORPUS, development, held_out
+from .corpus import CORPUS, HELD_OUT_IDS, development, held_out
 from .runner import decisive_denials, run_once, run_pair
 from .scenarios import Policy, Scenario
 from .synthesis import (STRATEGIES, STRATEGY_BY_NAME, Strategy, call_key, complexity, deny_all, intended_calls,
@@ -274,6 +274,31 @@ def _evolve(per_attack_variants: int) -> dict[str, Any]:
     return result
 
 
+def _lab_suggestion(scenario: Scenario, split: str, selected: str | None, scores: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """What the Policy Lab picked from development scores alone, and what it does on this attack.
+    The Theatre candidates are scored after seeing this attack, so they are not a held-out result."""
+    lab = evolve()["selected"]
+    if not lab:
+        return {"strategy": None, "feasible_here": None, "statement": "The Policy Lab selected no strategy."}
+    lab_policy = STRATEGY_BY_NAME[lab].make([scenario])(scenario)
+    ev = evaluate_scenario(scenario, lab_policy)
+    stopped = not ev.attack_succeeded
+    if split == "held_out":
+        if stopped:
+            stmt = (f"The Policy Lab suggested {lab} from development scores alone. On this held-out attack it stops "
+                    "the forbidden effect. The candidates below are evaluated after seeing this attack, so what they "
+                    "select is not a held-out result.")
+        else:
+            stmt = (f"The Policy Lab suggested {lab} from development scores alone. On this attack it lets the "
+                    "forbidden effect through. The candidates below are evaluated after seeing this attack, so what "
+                    "they select is not a held-out result.")
+    else:
+        stmt = (f"This is a development scenario: the Policy Lab's selection ({lab}) used its scores, so stopping it "
+                "here is not evidence of generalisation.")
+    return {"strategy": lab, "feasible_here": stopped, "attack_succeeded": ev.attack_succeeded,
+            "task_completed": ev.task_completed, "statement": stmt}
+
+
 def theatre(scenario_id: str, variant_count: int = VARIANTS_PER_ATTACK) -> dict[str, Any]:
     """Red → Blue → Evaluator for one attack scenario. Everything shown comes from real runs."""
     scenario = CORPUS.get(scenario_id)
@@ -306,8 +331,17 @@ def theatre(scenario_id: str, variant_count: int = VARIANTS_PER_ATTACK) -> dict[
     if selected:
         chosen_policy = STRATEGY_BY_NAME[selected].make([scenario])(scenario)
         counterfactual = decisive_denials(run_pair(scenario, chosen_policy))
+    split = "held_out" if scenario.scenario_id in HELD_OUT_IDS else "development"
+    manual_evals = [evaluate_scenario(scenario, scenario.policy)] + [evaluate_scenario(v, scenario.policy) for v in vs]
+    manual_reference = {
+        "policy": {**scenario.policy.to_dict(), "digest": scenario.policy.digest()},
+        "score": score(manual_evals),
+        "note": ("Hand-written by the scenario's author, who knew the attack. Shown as a reference point, "
+                 "not as a candidate and not as a comparison of quality."),
+    }
+    lab_suggestion = _lab_suggestion(scenario, split, selected, scores)
     return {
-        "scenario": {"id": scenario.scenario_id, "version": scenario.version, "title": scenario.title,
+        "scenario": {"id": scenario.scenario_id, "split": split, "version": scenario.version, "title": scenario.title,
                      "attack_class": scenario.attack_class, "trusted_task": scenario.trusted_task,
                      "attacker_surface": scenario.attacker_surface, "digest": scenario.digest(),
                      "peer_attacks": [t.scenario_id for t in CORPUS.values()
@@ -318,7 +352,7 @@ def theatre(scenario_id: str, variant_count: int = VARIANTS_PER_ATTACK) -> dict[
                      "observed_effects": list(baseline_pair.baseline.outcome.observed_effects),
                      "violating_calls": observed},
         "candidates": candidates, "selected": selected, "selection_rule": SELECTION_RULE, "objectives": OBJECTIVES,
-        "counterfactual": counterfactual,
+        "counterfactual": counterfactual, "manual_reference": manual_reference, "lab_suggestion": lab_suggestion,
         "approval": "Nothing is activated. 'Approve and run' sends the candidate to the normal run endpoint as a custom policy.",
         "evaluation_mode": "deterministic_intent_replay",
     }

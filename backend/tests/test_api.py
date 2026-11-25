@@ -429,3 +429,22 @@ def test_replay_on_a_drifted_manifest_is_refused_before_any_tool_runs(client):
 @pytest.mark.parametrize("body", [{"drift": "nope"}, {"drift": "Bad Name"}, {"approve_digest": "xyz"}, {"extra": 1}])
 def test_inspect_rejects_bad_requests(client, body):
     assert client.post("/api/mcp/inspect", json=body).status_code in (404, 422)
+
+
+def test_health_reports_the_effective_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECROSHIELD_WRITE_LIMIT", "30")
+    monkeypatch.setenv("NECROSHIELD_PROXY_HOPS", "1")
+    monkeypatch.setenv("NECROSHIELD_SEED_ON_START", "1")
+    with TestClient(create_app("/tmp/necroshield-health-test.db", allowed_origins={ORIGIN})) as c:
+        h = c.get("/api/health").json()
+    assert h["limits_per_minute"]["write"] == 30 and h["proxy_hops"] == 1
+    assert h["seed_on_start"] is True and h["database_ephemeral"] is True
+    with TestClient(create_app(str(tmp_path / "x.db"), allowed_origins={ORIGIN})) as c:
+        assert c.get("/api/health").json()["database_ephemeral"] is False
+
+
+def test_theatre_endpoint_reports_split_and_manual_reference(client):
+    t = client.get("/api/theatre/memory_overwrite_allowed_key").json()
+    assert t["scenario"]["split"] == "held_out" and t["lab_suggestion"]["feasible_here"] is False
+    fe = t["manual_reference"]["score"]["forbidden_effects_prevented"]
+    assert fe["numerator"] == fe["denominator"] > 0

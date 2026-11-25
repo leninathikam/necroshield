@@ -75,6 +75,12 @@ Eight strategies (`backend/necroshield/synthesis.py`): `allow_all`, `deny_all`, 
 3. **Suggestion:** a fixed tie-break (highest completion, lowest false positives, highest prevention, highest transfer, lowest complexity). It is a suggestion for a human, not an optimum.
 
 ## What the held-out numbers do and do not show
+**Held-out results influenced the design of this benchmark.** The sibling-transfer objective was added after a held-out result, and one held-out attack was added after an independent review (details under Process disclosures). The held-out set is therefore not a clean, untouched test of the final design, even though selection uses development scores only.
+
+Two kinds of strategy are reported separately everywhere (README, Policy Lab, JSON `scope` field):
+- **Plan-conditioned (per-scenario)**: each policy is compiled from the scored scenario's own trusted plan. Their held-out columns are *not* a generalisation test.
+- **Development-fitted (global)**: one policy fitted on development scenarios only. Their held-out columns are the generalisation evidence.
+
 - For **per-scenario** strategies the held-out result is **not a generalisation test**: the policy is compiled from the held-out scenario's own plan. It shows that a policy built from the right plan works.
 - **Global** strategies are the genuine generalisation test. `global_scoped` stops 4/6 held-out attacks and completes 7/12 tasks.
 - Sibling transfer is true by construction for strategies that depend only on the plan (`tool_allowlist`, `scoped_trace`, `exact_trace`). It informs only `violation_patch` and the global strategies.
@@ -93,7 +99,7 @@ Eight strategies (`backend/necroshield/synthesis.py`): `allow_all`, `deny_all`, 
 | Manually authored (each scenario's default policy) | 6/6 | 12/12 | 0/6 |
 | Synthesized (`scoped_trace`, compiled per scenario) | 5/6 | 11/12 | 0/6 |
 
-The synthesized arm is **weaker** than the manual policies on held-out. The synthesizer reproduces the manual policies' behavior on the development set from the plan alone, but not on the free-text attack.
+The synthesized arm stops one fewer held-out attack than the manual policies. The manual policies were hand-written by the author, who knew the attacks, so this row is a reference point and not a fair contest. The synthesizer reproduces the manual policies' behavior on the development set from the plan alone, but not on the free-text attack. Attack Theatre shows the manual policy as a labelled reference row, never as a candidate.
 
 ## Reproduce
 ```

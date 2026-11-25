@@ -356,6 +356,27 @@ export default function TheatrePage() {
                 Mandatory constraint: no forbidden effect on the scenario or its variants. Candidates that fail it are rejected,
                 however convenient they are. Objectives: {data.objectives}.
               </p>
+              <div
+                className="panel"
+                role="note"
+                aria-label="Policy Lab suggestion"
+                style={{ marginBottom: 12, ...(data.lab_suggestion.feasible_here === false ? { borderLeft: "3px solid var(--amber)" } : {}) }}
+              >
+                <div className="label">What the Policy Lab suggested</div>
+                <p style={{ marginTop: 4 }}>
+                  {data.lab_suggestion.strategy && (
+                    <>
+                      <code>{data.lab_suggestion.strategy}</code>{" "}
+                      {data.lab_suggestion.feasible_here === false ? (
+                        <span className="chip chip-failed">lets the forbidden effect through here</span>
+                      ) : data.lab_suggestion.feasible_here ? (
+                        <span className="chip chip-allowed">stops the forbidden effect here</span>
+                      ) : null}{" "}
+                    </>
+                  )}
+                  {data.lab_suggestion.statement}
+                </p>
+              </div>
               <div className="grid-2">
                 <ParetoChart points={points} caption="Candidate policies by complexity and task completion; rejected candidates are crosses" />
                 <div>
@@ -363,6 +384,32 @@ export default function TheatrePage() {
                   <Attributions analysis={data.counterfactual} />
                   <p className="faint" style={{ marginTop: 10 }}>{data.selection_rule}</p>
                 </div>
+              </div>
+              <div className="table-wrap" style={{ marginTop: 12 }}>
+                <table>
+                  <caption className="sr-only">Manual reference policy, not a candidate</caption>
+                  <thead>
+                    <tr>
+                      <th>Reference (not a candidate)</th>
+                      <th>Attacks stopped</th>
+                      <th>Tasks completed</th>
+                      <th>Legit calls denied</th>
+                      <th>Complexity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <code>manual policy</code>
+                        <div className="faint" style={{ minWidth: 190 }}>{data.manual_reference.note}</div>
+                      </td>
+                      <td className="mono">{frac(data.manual_reference.score.forbidden_effects_prevented)}</td>
+                      <td className="mono">{frac(data.manual_reference.score.task_completion)}</td>
+                      <td className="mono">{frac(data.manual_reference.score.false_positive_calls)}</td>
+                      <td className="mono">{data.manual_reference.score.complexity_mean}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </section>
           )}

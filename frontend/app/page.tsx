@@ -10,6 +10,7 @@ import { useApi } from "@/lib/useApi";
 
 export default function Dashboard() {
   const [scenarios, reloadScenarios] = useApi((s) => api.scenarios(s), []);
+  const [corpus, reloadCorpus] = useApi((s) => api.corpus(s), []);
   const [runs, reloadRuns] = useApi((s) => api.runs(8, s), []);
   const [bench, reloadBench] = useApi((s) => api.benchmark(s), []);
 
@@ -19,16 +20,17 @@ export default function Dashboard() {
         <div>
           <h1>Dashboard</h1>
           <p>
-            Adversarial tests for agent tool use. Each scenario runs twice from fresh synthetic state: once unprotected, once
-            behind a default-deny policy checked before every tool call.
+            Adversarial tests for agent tool use, on synthetic data only. Pick an attack and follow it from the compromise to a
+            generated policy, a test of which denial mattered, your approval, and a check of the evidence. Each run happens
+            twice from fresh state, unprotected and behind a default-deny policy.
           </p>
         </div>
       </header>
 
-      <Load value={scenarios} onRetry={reloadScenarios}>
-        {(list) => (
+      <Load value={corpus} onRetry={reloadCorpus}>
+        {(rows) => (
           <HeroSequence
-            scenarios={list}
+            attacks={rows.filter((r) => r.kind === "attack")}
             onRun={() => {
               reloadRuns();
               reloadBench();

@@ -277,6 +277,7 @@ export interface Candidate {
 export interface Theatre {
   scenario: {
     id: string;
+    split: "development" | "held_out";
     version: string;
     title: string;
     attack_class: string;
@@ -297,6 +298,14 @@ export interface Theatre {
   selection_rule: string;
   objectives: string;
   counterfactual: Attribution[];
+  manual_reference: { policy: PolicyDoc & { digest: string }; score: PolicyScore; note: string };
+  lab_suggestion: {
+    strategy: string | null;
+    feasible_here: boolean | null;
+    attack_succeeded?: boolean;
+    task_completed?: boolean;
+    statement: string;
+  };
   approval: string;
   evaluation_mode: string;
 }

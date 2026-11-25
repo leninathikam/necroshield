@@ -19,22 +19,31 @@ Version 2.0 adds a bounded closed loop on top of that: a Red Team makes seeded v
 ## Results (deterministic fixture replay; scenarios v2.0.0 / corpus above)
 Original seven scenarios (`python -m necroshield benchmark`): unprotected attack success 6/6, protected 0/6; task completion 6/7 unprotected, 7/7 protected; false positives 0/1; denial rate 6/36.
 
-Policy evaluation (`python -m necroshield evolve`). The selection uses development scores only:
+**Disclosure first.** Held-out results influenced the design of this benchmark. The cross-attack transfer objective was added after a held-out result showed the cheapest patch overfitting, and one held-out attack (`memory_overwrite_allowed_key`) was added after an independent review. Selection still uses development scores only, but the objective set and the corpus were shaped by what held-out data showed. The corpus is small and author-built, and the split is author-chosen. The manual policies were written by the author, who knew the attacks.
 
-| Strategy | Dev: attacks stopped | Dev: tasks | Held-out: attacks stopped | Held-out: tasks | Held-out is a generalisation test? |
-|---|---|---|---|---|---|
-| allow_all, tool_allowlist, global_tool_allowlist | rejected | | | | |
-| deny_all | 5/5 | 0/10 | 6/6 | 0/12 | no (blocks everything) |
-| **scoped_trace** (suggested) | 5/5 | 10/10 | **5/6** | 11/12 | no: compiled from each scenario's own plan |
-| exact_trace | 5/5 | 10/10 | 6/6 | 12/12 | no: same |
-| violation_patch | 5/5 | 10/10 | 6/6 | 12/12 | no: same; but stops only 1/5 sibling attacks |
-| global_scoped | 5/5 | 10/10 | 4/6 | 7/12 | **yes** (fitted on development only) |
+Policy evaluation (`python -m necroshield evolve`). The Lab's suggestion uses development scores only. The two kinds of strategy answer different questions and are reported in separate tables.
+
+**Plan-conditioned strategies** (compiled per scenario from that scenario's own trusted plan). Their held-out columns are **not a generalisation test**: they show that a policy built from the right plan works.
+
+| Strategy | Dev: attacks stopped | Dev: tasks | Held-out: attacks stopped | Held-out: tasks |
+|---|---|---|---|---|
+| allow_all, tool_allowlist | rejected | | | |
+| deny_all | 5/5 | 0/10 | 6/6 | 0/12 (blocks everything) |
+| **scoped_trace** (suggested by the Lab) | 5/5 | 10/10 | **5/6** | 11/12 |
+| exact_trace | 5/5 | 10/10 | 6/6 | 12/12 |
+| violation_patch | 5/5 | 10/10 | 6/6 | 12/12 (stops only 1/5 sibling attacks) |
+
+**Development-fitted strategies** (one global policy fitted on development scenarios only). Their held-out columns are the real generalisation evidence, and it is weak.
+
+| Strategy | Dev: attacks stopped | Dev: tasks | Held-out: attacks stopped | Held-out: tasks |
+|---|---|---|---|---|
+| global_tool_allowlist | rejected | | | |
+| global_scoped | 5/5 | 10/10 | 4/6 | 7/12 (4/47 legitimate calls denied) |
 
 Read these honestly:
-- The suggested policy **fails one held-out attack** (`memory_overwrite_allowed_key`): it leaves free-text arguments open. The Lab reports this on the page.
-- For per-scenario strategies, held-out scores show that a policy compiled from the right plan works. They are not evidence of generalisation. The only real generalisation test is `global_scoped`, and it is weak.
-- The cross-attack transfer objective was added after a held-out result, and one held-out attack was added after an independent review. Both are disclosed in the results JSON and `docs/benchmark-methodology.md`.
-- The corpus is small and author-built; the split is author-chosen. These results say nothing about how a language model behaves.
+- The suggested policy **fails one held-out attack** (`memory_overwrite_allowed_key`): it leaves free-text arguments open. The Lab and Attack Theatre report this. In Attack Theatre the candidates are scored after the attack is seen, so what they select there is not a held-out result.
+- The hand-written manual policies stop 6/6 held-out attacks and complete 12/12 tasks. That does not show the synthesized policies are worse or better in general: the manual ones were written with knowledge of the attacks, and the synthesized ones were not tuned to this attack.
+- These results say nothing about how a language model behaves.
 
 ## Not implemented
 - **Information-flow tracking and data provenance (spec R19).** The policy pins argument values (including attachments by reference), which constrains some flows, but there is no label propagation. This is not information-flow control.

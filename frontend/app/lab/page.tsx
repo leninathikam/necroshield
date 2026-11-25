@@ -25,11 +25,14 @@ function Cells({ s }: { s: PolicyScore }) {
   );
 }
 
-function Strategies({ e }: { e: Evolution }) {
+function Strategies({ e, rows, title, note }: { e: Evolution; rows: StrategyRow[]; title: string; note: string }) {
   return (
     <div className="table-wrap">
       <table>
-        <caption className="sr-only">Policy strategies on development and held-out scenarios</caption>
+        <caption style={{ textAlign: "left", padding: "0 0 8px" }}>
+          <strong>{title}</strong>
+          <span className="faint" style={{ display: "block", fontWeight: 400 }}>{note}</span>
+        </caption>
         <thead>
           <tr>
             <th rowSpan={2}>Strategy</th>
@@ -43,7 +46,7 @@ function Strategies({ e }: { e: Evolution }) {
           </tr>
         </thead>
         <tbody>
-          {e.strategies.map((s) => (
+          {rows.map((s) => (
             <tr key={s.name} className={s.selected ? "row-chosen" : undefined}>
               <td>
                 <code>{s.name}</code>
@@ -159,11 +162,20 @@ export default function LabPage() {
                 the same task, where a policy synthesized for the source is applied to the target. It is true by construction for
                 policies that depend only on the plan, so it informs only <code>violation_patch</code> and the global policies. <strong>legit denied</strong>: calls the trusted task needs that were refused. Objectives: {e.objectives}.
               </p>
-              <Strategies e={e} />
-              <p className="faint" style={{ marginTop: 8 }}>
-                Held-out columns for the per-task strategies are not generalisation tests: each policy is compiled from the scenario&apos;s
-                own plan. Only the global strategies are fitted on development alone.
-              </p>
+              <div className="stack">
+                <Strategies
+                  e={e}
+                  rows={e.strategies.filter((s) => s.scope === "per-scenario")}
+                  title="Plan-conditioned strategies: compiled per scenario from that scenario's own trusted plan"
+                  note="The held-out columns here are not a generalisation test. Each policy is built from the plan of the scenario it is scored on, so the numbers show that a policy compiled from the right plan works, not that it transfers."
+                />
+                <Strategies
+                  e={e}
+                  rows={e.strategies.filter((s) => s.scope === "global")}
+                  title="Development-fitted strategies: one policy fitted on development scenarios only"
+                  note="Only these are fitted on development alone and then applied unchanged to held-out scenarios, so their held-out columns are the generalisation evidence."
+                />
+              </div>
               <p className="faint" style={{ marginTop: 10 }}>{e.selection_rule}</p>
             </section>
 

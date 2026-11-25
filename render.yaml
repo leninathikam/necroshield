@@ -1,7 +1,9 @@
 # Render blueprint (https://render.com/docs/blueprint-spec).
 # Free plan, as chosen by the participant: no persistent disk, so the database lives in /tmp and
 # is lost when the instance restarts or sleeps. Seeding on start keeps the benchmark populated.
-# Render assigns PORT and RENDER_EXTERNAL_URL itself; the app reads both.
+# Render assigns PORT and RENDER_EXTERNAL_URL itself; the app reads both and accepts requests from its own
+# origin, so no allowed-origins variable is needed. Set NECROSHIELD_ALLOWED_ORIGINS in the dashboard only
+# if you add a custom domain (docs/deployment.md).
 services:
   - type: web
     name: necroshield
@@ -9,8 +11,6 @@ services:
     plan: free
     healthCheckPath: /api/health
     envVars:
-      - key: NECROSHIELD_ALLOWED_ORIGINS
-        sync: false          # optional: same-origin and RENDER_EXTERNAL_URL are already accepted
       - key: NECROSHIELD_DB
         value: /tmp/necroshield.db
       - key: NECROSHIELD_SEED_ON_START

@@ -303,3 +303,29 @@ def test_approved_candidate_runs_as_a_custom_policy_with_verifiable_evidence(ver
     assert verifier.verify(pair.export()) == []
     with pytest.raises(KeyError):
         candidate_policy("unauthorized_record_access", "global_scoped")
+
+
+def test_theatre_discloses_that_the_lab_pick_fails_the_held_out_attack():
+    t = theatre("memory_overwrite_allowed_key", 3)
+    assert t["scenario"]["split"] == "held_out"
+    lab = t["lab_suggestion"]
+    assert lab["strategy"] == "scoped_trace" and lab["feasible_here"] is False and lab["attack_succeeded"] is True
+    assert "lets the forbidden effect through" in lab["statement"]
+    assert "not a held-out result" in lab["statement"]
+    # The theatre selects a different policy here, but the record must not hide that the Lab's pick failed.
+    assert t["selected"] != lab["strategy"]
+
+
+def test_theatre_manual_reference_is_a_reference_not_a_candidate():
+    t = theatre("memory_overwrite_allowed_key", 3)
+    ref = t["manual_reference"]
+    assert ref["policy"]["digest"] == CORPUS["memory_overwrite_allowed_key"].policy.digest()
+    assert "author, who knew the attack" in ref["note"]
+    assert "manual_reference" not in {c["name"] for c in t["candidates"]}
+
+
+def test_theatre_labels_development_scenarios_as_used_in_selection():
+    t = theatre("data_exfiltration", 3)
+    assert t["scenario"]["split"] == "development"
+    assert "used its scores" in t["lab_suggestion"]["statement"]
+    assert "forbidden effect through" not in t["lab_suggestion"]["statement"]

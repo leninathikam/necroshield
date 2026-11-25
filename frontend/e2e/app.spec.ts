@@ -9,20 +9,38 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `test-results/screens/${test.info().project.name}-${name}.png`, fullPage: true });
 }
 
-test("dashboard sequence runs a real pair and verifies it", async ({ page }) => {
+test("dashboard sequence: attack, policy generation, counterfactual, human approval, verification", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await page.getByLabel("Scenario for the sequence").selectOption("document_injection");
+  await page.getByLabel("Attack for the sequence").selectOption("document_injection");
   await page.getByRole("button", { name: "Run the sequence" }).click();
   const hero = page.locator(".hero");
-  await expect(hero).toContainText("Baseline: attack: another customer's token reached the sink", { timeout: 15_000 });
-  await expect(hero).toContainText("Denied before dispatch: send_message");
-  await expect(hero).toContainText("Standalone verifier: chain links, policy decisions", { timeout: 15_000 });
-  await expect(page.getByRole("link", { name: "document_injection" }).first()).toBeVisible();
+  await expect(hero).toContainText("Unprotected run: attack: another customer's token reached the sink", { timeout: 15_000 });
+  await expect(hero).toContainText("candidate policies built from the trusted task", { timeout: 15_000 });
+  await expect(hero).toContainText("Remove the decisive denial and the attack returns", { timeout: 15_000 });
+  // Nothing is approved or verified until the visitor clicks.
+  const approve = page.getByRole("button", { name: "Approve and run" });
+  await expect(approve).toBeVisible({ timeout: 15_000 });
+  await expect(hero).toContainText("Nothing is activated until you approve");
+  await expect(hero).not.toContainText("standalone verifier");
+  await approve.click();
+  await expect(hero).toContainText("attack blocked", { timeout: 15_000 });
+  await expect(hero).toContainText("task completed");
+  await expect(hero).toContainText("scripts/verify_evidence.py offline", { timeout: 15_000 });
+  const order = await hero.locator("h3").allTextContents();
+  expect(order).toEqual(["1. Attack", "2. Policy generation", "3. Counterfactual test", "4. Human approval", "5. Independent verification"]);
   await noHorizontalOverflow(page);
   await shot(page, "dashboard");
   await page.getByRole("link", { name: "Open in Replay Lab" }).click();
   await expect(page.getByRole("heading", { name: "Replay Lab" })).toBeVisible();
+});
+
+test("dashboard sequence shows the held-out attack the Lab suggestion fails", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Attack for the sequence").selectOption("memory_overwrite_allowed_key");
+  await page.getByRole("button", { name: "Run the sequence" }).click();
+  await expect(page.locator(".hero")).toContainText("lets the forbidden effect through", { timeout: 15_000 });
+  await expect(page.locator(".hero")).toContainText("not a held-out result");
 });
 
 test("arena shows inert injected source and launches a pair", async ({ page }) => {
