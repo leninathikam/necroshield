@@ -17,6 +17,27 @@ Everything below was observed in this session: locally in the Kiro Web sandbox (
 
 Local, in the sandbox: `python3 -m pytest -q -o addopts=""` gave 289 passed, 19 skipped. The skipped tests need FastAPI, the MCP SDK, `cryptography`, `httpx`, or Hypothesis, which this sandbox cannot install; CI ran them.
 
+## Deployment and submission-readiness audit (2026-11-25)
+Code commit `911975c` (previous run on `07e7fd6` failed one test that wrongly assumed pytest's temporary directory is outside `/tmp`; fixed). All ten CI jobs passed on `911975c`.
+
+| Job | Result |
+|---|---|
+| core tests, Python 3.11 to 3.14 | pass (310 passed, 18 skipped on 3.11) |
+| api, mcp, live-loop, signing, patch, manifest tests | **413 passed, 0 skipped** |
+| playwright, desktop and mobile | pass (38 passed on `07e7fd6`; the later commit changed only a backend test) |
+| container under production conditions | pass. Free-plan container started from the `render.yaml` environment, healthy 1 s after `docker run`. Smoke test passed in direct mode at the real write limit of 30 and in proxied mode through an `X-Forwarded-For` appending proxy. A replacement instance reseeded exactly 7 pairs. Peak memory 69 MB. |
+| benchmark, frontend, dependency audit, secret scan | pass |
+
+Findings and changes:
+- `docs/deployment.md` mixed the paid disk path into the free plan. It is now two delimited parts, and a test asserts the free part uses `/tmp/necroshield.db` and contains no `/data`.
+- The smoke test hard-coded a write limit of 5 and assumed forged `X-Forwarded-For` creates clients, which is false behind a real proxy. It now reads the configuration from `/api/health` and has direct and proxied modes.
+- `render.yaml` no longer declares `NECROSHIELD_ALLOWED_ORIGINS` (`sync: false` prompts at blueprint creation, and the app does not need it).
+- Attack Theatre now states when the Policy Lab's suggestion fails a held-out attack, labels its own scores as not held-out, and shows the manual policy only as a reference row.
+- Policy Lab, README and methodology separate plan-conditioned strategies from development-fitted ones and disclose that held-out results influenced the objectives and corpus.
+- The landing sequence is Attack, Policy generation, Counterfactual test, Human approval, Independent verification, with the approval step waiting for a click.
+
+Still not verified: behaviour on Render itself (cold start time, number of proxy layers, `PROXY_HOPS=1`), the cold-start and spin-down figures (taken from Render's public pages as seen in search results; the page returned 403 here), any real-model run, and Kiro hook execution.
+
 ## Results (deterministic fixture replay)
 `python -m necroshield evolve --variants 3`, corpus of 22 scenarios (11 attacks in 6 classes, 11 controls; development 10, held-out 12):
 
